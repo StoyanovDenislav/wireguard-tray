@@ -187,8 +187,40 @@ jobs:
           find artifacts -type f \( -name "*.zip" -o -name "*.tar.gz" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.exe" \) -exec cp {} release/ \;
           ls -la release
 
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+
+      - name: Extract this version's changelog section
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          # Pull the "## <version>" section out of CHANGELOG.md (stops at
+          # the next "## " heading). This is what the in-app "What's new"
+          # dialog and the GitHub Release page both show as the release
+          # body — without it, generate_release_notes alone only produces
+          # a bare commit-compare link, not actual prose.
+          awk -v ver="## $VERSION" '
+            $0 == ver { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > body.md
+
+          if [ ! -s body.md ]; then
+            echo "::warning::No CHANGELOG.md section found for $VERSION; release body will just be the commit list."
+          fi
+
+          {
+            echo "body<<CHANGELOG_EOF"
+            cat body.md
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: release/*
+          body: ${{ steps.changelog.outputs.body }}
           generate_release_notes: true
+          append_body: true

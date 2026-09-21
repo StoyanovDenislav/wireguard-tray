@@ -12,6 +12,15 @@ open-source client it should've been in the first place.
 
 Works on Linux, macOS, and Windows.
 
+## Scope
+
+This is a basic, personal-use tool — think "connect to my home server/NAS
+or a personal VPS," not "secure a fleet of enterprise endpoints." It hasn't
+had a formal security audit, there's no central management, no policy
+enforcement, no MDM integration, and no support contract. If you need
+enterprise-grade WireGuard tooling, this isn't it — look at something like
+Tailscale, Headscale, or a commercial WireGuard management platform instead.
+
 ## Install
 
 ### Option 1: Download a prebuilt release (easiest)
