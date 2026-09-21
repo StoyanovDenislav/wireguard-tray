@@ -6,8 +6,8 @@ from PySide6.QtWidgets import (
     QMainWindow, QMessageBox, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
-from .. import leak_protection
-from ..state import leak_protection_enabled, list_configs, set_leak_protection
+from .. import config_editor, leak_protection
+from ..state import config_path, leak_protection_enabled, list_configs, set_leak_protection
 from .config_editor_dialog import ConfigEditorDialog
 
 
@@ -207,15 +207,32 @@ class MainWindow(QMainWindow):
             return
 
         if checked:
-            proceed = QMessageBox.question(
-                self,
-                "Enable kill switch?",
+            has_dns = bool(config_editor.get_field(
+                config_path(name).read_text(), "Interface", "DNS"
+            ))
+
+            message = (
                 "This blocks ALL other internet access on this machine if "
                 "the tunnel drops, not just the VPN — you'll lose internet "
                 "entirely until you reconnect or disconnect this tunnel in "
                 "wg-tray.\n\nIt also blocks DNS queries and disables IPv6 "
                 "on your physical network interfaces while connected.\n\n"
-                "Enable it for this tunnel?",
+            )
+            if not has_dns:
+                message += (
+                    "⚠ This tunnel's config has no DNS server set. DNS queries "
+                    "will be blocked on your physical network with nothing "
+                    "redirecting them through the tunnel instead — name "
+                    "resolution will likely stop working entirely while "
+                    "connected. Add a DNS = line via Edit config… first "
+                    "unless you're sure this is what you want.\n\n"
+                )
+            message += "Enable it for this tunnel?"
+
+            proceed = QMessageBox.question(
+                self,
+                "Enable kill switch?",
+                message,
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )

@@ -221,6 +221,21 @@ most current distros; `pacman -S nftables` on Arch/Artix if missing).
 Not yet available on Windows (needs the Windows Filtering Platform, a
 much bigger lift).
 
+**If your tunnel's config has no `DNS =` line**, wg-tray warns you before
+enabling the kill switch: since nothing tells `wg-quick` to redirect DNS
+to the tunnel, blocking DNS on your physical network will break name
+resolution entirely rather than protect anything — there's no tunnel
+DNS path for the block to be "instead of." Add a `DNS =` line via
+**Edit config…** first if you want the kill switch and working DNS
+together.
+
+On Linux specifically, if you do have `DNS =` set but resolution still
+doesn't switch to it, check whether `resolvconf`/`openresolv` is
+actually applying updates: `resolvconf -u` clears a "signature mismatch"
+error (something else touched `/etc/resolv.conf` since resolvconf last
+wrote it) that silently prevents `wg-quick` from updating your resolver
+even though it looks like nothing went wrong.
+
 ## Update checking and installing
 
 wg-tray never phones home on its own. There's no background process, no

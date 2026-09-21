@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.1
+
+- **Added**: a warning when enabling the kill switch on a tunnel with no
+  `DNS =` line configured. Confirmed on real Linux testing: without a
+  DNS server set, nothing tells wg-quick to redirect DNS to the tunnel,
+  so the kill switch's DNS-block rule breaks name resolution entirely
+  rather than protecting anything — the block has no tunnel DNS path to
+  be "instead of." Documented the fix (add `DNS =` via the config
+  editor) and, on Linux, a separate `resolvconf` "signature mismatch"
+  gotcha that can silently prevent DNS from switching to the tunnel
+  even with `DNS =` correctly set (`resolvconf -u` clears it).
+
 ## 0.8.0
 
 - **Added**: kill switch + leak protection now works on Linux, not just
