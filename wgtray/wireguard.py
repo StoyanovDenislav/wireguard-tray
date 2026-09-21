@@ -69,7 +69,17 @@ def connect(name):
         wg_quick = find_wg_quick()
         if not wg_quick:
             return False, "wg-quick not found. Install wireguard-tools first."
-        conf = str(_effective_config_path(name))
+        try:
+            conf = str(_effective_config_path(name))
+        except Exception as e:
+            # _effective_config_path can raise (e.g. leak_protection's
+            # already-derived-name guard, or a file I/O error regenerating
+            # the protected config) — never let that escape connect()
+            # uncaught. An uncaught exception here previously meant the
+            # toggle button would silently stop responding until the kill
+            # switch checkbox was manually re-toggled (which happened to
+            # reset the leak_protection state that was tripping the guard).
+            return False, f"Couldn't prepare config for '{name}': {e}"
         if IS_MAC:
             bash = find_bash()
             argv = [bash, wg_quick, "up", conf]

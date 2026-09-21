@@ -1,5 +1,5 @@
 """Sidebar (tunnel list) + detail pane main window, Mullvad/OpenVPN-style."""
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCloseEvent, QFont
 from PySide6.QtWidgets import (
     QCheckBox, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
@@ -12,9 +12,16 @@ from .config_editor_dialog import ConfigEditorDialog
 
 
 class MainWindow(QMainWindow):
+    # Re-emitted here (rather than connecting WgTray's slot directly to
+    # the worker thread's signal) purely so the connection has a main-
+    # thread QObject on the receiving end — see tray.py's
+    # _start_toggle_worker for why that matters.
+    toggle_finished = Signal(bool, str)
+
     def __init__(self, controller):
         super().__init__()
         self.controller = controller
+        self._toggle_busy = False
         self.setWindowTitle("wg-tray")
         self.resize(680, 420)
 
@@ -176,6 +183,13 @@ class MainWindow(QMainWindow):
             self._repolish(self.status_label, self.toggle_btn)
             return
 
+        if self._toggle_busy:
+            # A connect/disconnect is in flight (see set_toggle_busy) —
+            # leave the busy state's button text/disabled-ness alone
+            # rather than letting a periodic refresh stomp on it.
+            self.name_label.setText(name)
+            return
+
         self.toggle_btn.setEnabled(True)
         self.name_label.setText(name)
 
@@ -257,6 +271,23 @@ class MainWindow(QMainWindow):
         if name is None:
             return
         self.controller.toggle(name)
+
+    def set_toggle_busy(self, busy):
+        """
+        Called by WgTray while a connect/disconnect is running on its
+        background thread (see tray.py's _ToggleWorker) — keeps the
+        button from being double-clicked mid-operation and shows that
+        something is happening, without the window doing anything that
+        could make it look like it closed.
+        """
+        self._toggle_busy = busy
+        self.toggle_btn.setEnabled(not busy)
+        if busy:
+            active = self.controller.current_active()
+            name = self.selected_name()
+            self.toggle_btn.setText("Disconnecting…" if name == active else "Connecting…")
+        else:
+            self.update_detail()
 
     def on_edit_config_clicked(self):
         name = self.selected_name()

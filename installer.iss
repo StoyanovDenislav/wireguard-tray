@@ -36,4 +36,10 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
+; Interactive install: offer to launch, like any normal installer.
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+; Silent install (used by wg-tray's own in-app updater, self_update.py,
+; via /VERYSILENT): always relaunch afterward with no prompt, since the
+; whole point of installing that way is that the app is about to quit
+; and expects to come back up on the new version automatically.
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait runascurrentuser; Check: WizardSilent

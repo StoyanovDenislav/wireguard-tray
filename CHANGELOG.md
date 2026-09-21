@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.9.0
+
+- **Changed**: left-click on the tray icon now opens the window;
+  right-click opens the menu. Previously both were bound to the same
+  click via `setContextMenu`, so this needed splitting via
+  `QSystemTrayIcon.activated`'s reason instead.
+- **Fixed**: connecting/disconnecting could make the whole window
+  disappear entirely (had to reopen it from the tray). Root cause:
+  `connect()`/`disconnect()` block on `subprocess.run()` while the
+  pkexec/osascript/UAC privilege prompt is up, with nothing pumping the
+  Qt event loop in the meantime — an unresponsive GUI app during an
+  external elevation dialog can get its window hidden by the window
+  manager. Connect/disconnect now run on a background QThread so the UI
+  stays responsive throughout; the toggle button shows "Connecting…"/
+  "Disconnecting…" and is disabled until it finishes.
+- **Fixed**: a real cross-thread Qt violation introduced while building
+  the above ("Cannot create children for a parent that is in a
+  different thread") — WgTray is a plain Python object, not a QObject,
+  so connecting the worker thread's finished signal directly to one of
+  its methods gave Qt no thread context to route the call through
+  safely. Routed through a signal on MainWindow (a real QObject with
+  main-thread affinity) instead.
+- **Fixed**: the connect button could silently stop responding after
+  toggling the kill switch checkbox, only working again after
+  unchecking and rechecking it. Root cause: an exception from
+  `leak_protection.generate_protected_config()` (e.g. its
+  already-derived-name guard) was propagating uncaught out of
+  `connect()`, through a bare Qt signal handler that swallows it
+  silently — the button looked fine but nothing happened. connect() now
+  catches and surfaces this as a normal error message instead.
+- **Added**: on Windows, the in-app updater's silent install
+  (`/VERYSILENT`) now relaunches wg-tray afterward. The installer's
+  post-install launch step previously had `skipifsilent`, which (by
+  design, for a normal silent unattended install) skipped relaunching —
+  but the in-app updater's whole premise is that the app quit and
+  expects to come back up automatically. Not yet verified on a real
+  Windows build.
+
 ## 0.8.1
 
 - **Added**: a warning when enabling the kill switch on a tunnel with no

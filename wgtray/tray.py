@@ -2,11 +2,11 @@
 the WireGuard control + update-checking logic."""
 from pathlib import Path
 
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QCursor
 from PySide6.QtWidgets import (
     QFileDialog, QInputDialog, QLineEdit, QMenu, QMessageBox, QSystemTrayIcon,
 )
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 
 from . import APP_VERSION
 from .state import list_configs, load_state, save_state
@@ -23,18 +23,72 @@ POLL_INTERVAL_MS = 5_000
 AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000  # 6 hours
 
 
+class _ToggleWorker(QObject):
+    """
+    Runs the connect/disconnect sequence off the main thread.
+
+    connect()/disconnect() block on subprocess.run() while pkexec/
+    osascript/UAC's privilege prompt is up, with nothing pumping the Qt
+    event loop in the meantime. On Linux especially, a GUI app that stops
+    responding to events while a separate elevation dialog is open can
+    get treated as unresponsive by the window manager and have its main
+    window hidden/minimized — this worker keeps the event loop (and the
+    window) alive for the whole toggle instead.
+    """
+    finished = Signal(bool, str)  # ok, error_message ("" if ok)
+
+    def __init__(self, target_name, active_name):
+        super().__init__()
+        self.target_name = target_name
+        self.active_name = active_name
+
+    def run(self):
+        # An uncaught exception here would kill the worker silently (Qt
+        # doesn't propagate it anywhere visible) and leave the button
+        # disabled forever, since _on_toggle_finished/set_toggle_busy(False)
+        # would never run — exactly the "button stops working" failure
+        # mode this replaces. Never let connect()/disconnect() raise past
+        # this point uncaught.
+        try:
+            self._run()
+        except Exception as e:
+            self.finished.emit(False, f"Unexpected error: {e}")
+
+    def _run(self):
+        active = self.active_name
+        name = self.target_name
+        if active == name:
+            ok, out = disconnect(name)
+            self.finished.emit(ok, "" if ok else f"Failed to disconnect:\n{out}")
+            return
+
+        if active:
+            ok, out = disconnect(active)
+            if not ok:
+                self.finished.emit(False, f"Failed to disconnect '{active}' first:\n{out}")
+                return
+
+        ok, out = connect(name)
+        self.finished.emit(ok, "" if ok else f"Failed to connect:\n{out}")
+
+
 class WgTray:
     def __init__(self, app):
         self.app = app
+        self._toggle_thread = None
+        self._toggle_worker = None
         self.tray = QSystemTrayIcon()
         self.menu = QMenu()
-        self.tray.setContextMenu(self.menu)
+        # Not using setContextMenu here: on some platforms that binds the
+        # menu to left-click too, which is exactly the split we don't
+        # want. activated's reason tells left vs right click apart, and
+        # QMenu.popup() is used explicitly for the right-click case.
         self.window = MainWindow(self)
         self.rebuild_menu()
+        self.tray.activated.connect(self.on_tray_activated)
         self.tray.show()
 
-        # Show the window once on startup; after that, the tray icon just
-        # opens its menu (left-click) — "Open window..." brings it back.
+        # Show the window once on startup.
         self.show_window()
         self.maybe_show_changelog()
 
@@ -55,6 +109,16 @@ class WgTray:
         self.window.show()
         self.window.raise_()
         self.window.activateWindow()
+
+    def on_tray_activated(self, reason):
+        # Trigger = left-click (or the platform's primary tap) -> window.
+        # Context menu request = right-click -> menu. Some platforms also
+        # send DoubleClick on a fast double left-click; treat that as
+        # "show the window" too rather than doing nothing.
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            self.show_window()
+        elif reason == QSystemTrayIcon.Context:
+            self.menu.popup(QCursor.pos())
 
     def show_settings(self):
         dlg = SettingsDialog(self, self.window)
@@ -144,24 +208,52 @@ class WgTray:
 
     def toggle(self, name):
         active = self.current_active()
-        if active == name:
-            ok, out = disconnect(name)
-            if not ok:
-                self.error(f"Failed to disconnect:\n{out}")
-        else:
-            if active:
-                ok, out = disconnect(active)
-                if not ok:
-                    self.error(f"Failed to disconnect '{active}' first:\n{out}")
-                    return
 
-            if not self._resolve_vpn_conflict():
-                return
+        # The VPN-conflict check/dialog only matters when we're about to
+        # connect (not when just disconnecting), and needs to run on the
+        # main thread since it can show a dialog.
+        if active != name and not self._resolve_vpn_conflict():
+            return
 
-            ok, out = connect(name)
-            if not ok:
-                self.error(f"Failed to connect:\n{out}")
+        self._start_toggle_worker(name, active)
+
+    def _start_toggle_worker(self, name, active):
+        if getattr(self, "_toggle_thread", None) is not None:
+            return  # a toggle is already in flight; ignore re-clicks
+
+        self.window.set_toggle_busy(True)
+
+        self._toggle_thread = QThread()
+        self._toggle_worker = _ToggleWorker(name, active)
+        self._toggle_worker.moveToThread(self._toggle_thread)
+        self._toggle_thread.started.connect(self._toggle_worker.run)
+        # Connect to a slot on self.window (a real QObject with main-thread
+        # affinity) rather than a plain method on WgTray itself — WgTray
+        # is an ordinary Python object, not a QObject, so Qt has no thread
+        # context for it and a direct connection would invoke
+        # _on_toggle_finished on the worker's own thread. That then
+        # touches QMenu/QAction from off the main thread, logging "Cannot
+        # create children for a parent that is in a different thread" (or
+        # worse). Routing through self.window's own signal, which *is* a
+        # QObject living on the main thread, lets Qt's normal
+        # cross-thread auto-queuing do the right thing.
+        self._toggle_worker.finished.connect(self.window.toggle_finished)
+        self.window.toggle_finished.connect(self._on_toggle_finished)
+        self._toggle_worker.finished.connect(self._toggle_thread.quit)
+        self._toggle_thread.finished.connect(self._cleanup_toggle_thread)
+        self._toggle_thread.start()
+
+    def _on_toggle_finished(self, ok, error_message):
+        if not ok:
+            self.error(error_message)
         self.refresh_all()
+
+    def _cleanup_toggle_thread(self):
+        self.window.set_toggle_busy(False)
+        self._toggle_thread.deleteLater()
+        self._toggle_worker.deleteLater()
+        self._toggle_thread = None
+        self._toggle_worker = None
 
     def _resolve_vpn_conflict(self):
         """
