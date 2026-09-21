@@ -1,0 +1,100 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macos
+          - os: ubuntu-latest
+            name: linux
+          - os: windows-latest
+            name: windows
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system dependencies (Linux)
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libzbar0 libegl1 libxkbcommon0 libgl1
+
+      - name: Install system dependencies (macOS)
+        if: matrix.name == 'macos'
+        run: brew install zbar
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build with PyInstaller
+        run: pyinstaller --noconfirm wg_tray.spec
+
+      - name: Package macOS app
+        if: matrix.name == 'macos'
+        run: |
+          cd dist
+          ditto -c -k --sequesterRsrc --keepParent wg-tray.app wg-tray-macos.zip
+
+      - name: Package Linux build
+        if: matrix.name == 'linux'
+        run: |
+          cd dist
+          tar -czf wg-tray-linux.tar.gz wg-tray
+
+      - name: Package Windows build
+        if: matrix.name == 'windows'
+        run: |
+          cd dist
+          Compress-Archive -Path wg-tray -DestinationPath wg-tray-windows.zip
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wg-tray-${{ matrix.name }}
+          path: |
+            dist/wg-tray-macos.zip
+            dist/wg-tray-linux.tar.gz
+            dist/wg-tray-windows.zip
+          if-no-files-found: ignore
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir release
+          find artifacts -type f \( -name "*.zip" -o -name "*.tar.gz" \) -exec cp {} release/ \;
+          ls -la release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
