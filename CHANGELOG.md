@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.9.1
+
+- **Fixed**: connecting with the kill switch enabled failed on every
+  attempt after the first with "'<name>' looks like an already-derived
+  leak-protection config." The guard against protecting an
+  already-derived config's own name checked `name in
+  _load_manifest().values()` — but `.values()` holds the *original*
+  tunnel names, which every successfully-protected tunnel legitimately
+  appears in after its first connect. This made the guard fire on every
+  reconnect after the first one, not just the actual bad case it was
+  meant to catch. Now checks manifest *keys* (the derived stems)
+  instead, which is what "is this name itself a derived config"
+  actually means.
+- **Fixed**: a failed connect/disconnect could pop up multiple stacked
+  "Failed to..." dialogs that looked like the error dialog "looping"
+  when you tried to close one (closing it just revealed the next one
+  queued behind it). Root cause: the v0.9.0 threading change connected
+  the toggle-finished signal to its handler fresh on every single
+  toggle attempt without ever disconnecting the previous one, so after
+  N toggles a failure would fire the handler (and its error dialog) N
+  times. Connected once now, in `__init__`, instead of per-toggle.
+
 ## 0.9.0
 
 - **Changed**: left-click on the tray icon now opens the window;

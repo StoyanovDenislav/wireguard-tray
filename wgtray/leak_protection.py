@@ -141,11 +141,17 @@ def generate_protected_config(name):
     if not is_supported():
         raise RuntimeError("Leak protection isn't supported on this platform/setup.")
 
-    if name in _load_manifest().values():
+    if name in _load_manifest():
         # Guards against ever protecting an already-derived config's own
-        # name — unreachable in normal use since list_configs() filters
-        # derived files out, but fail loudly rather than silently
-        # generating nonsense if something upstream regresses.
+        # name (i.e. name is itself a derived stem like "wgtp1234567890",
+        # a manifest *key* — not to be confused with .values(), which are
+        # the original tunnel names every successfully-protected tunnel
+        # legitimately appears as after its first connect; checking
+        # .values() here was a bug that broke every reconnect after the
+        # first one). Unreachable in normal use since list_configs()
+        # filters derived files out of the tunnel list entirely, but fail
+        # loudly rather than silently generating nonsense if something
+        # upstream regresses.
         raise ValueError(f"'{name}' looks like an already-derived leak-protection config.")
 
     original = CONFIGS_DIR / f"{name}.conf"

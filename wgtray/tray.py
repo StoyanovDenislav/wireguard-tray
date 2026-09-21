@@ -86,6 +86,14 @@ class WgTray:
         self.window = MainWindow(self)
         self.rebuild_menu()
         self.tray.activated.connect(self.on_tray_activated)
+        # Connected once here, not per-toggle in _start_toggle_worker —
+        # that was a real bug: reconnecting this signal on every toggle
+        # left N stale connections after N toggles, so a single failed
+        # connect/disconnect would call self.error() N times and stack
+        # up N modal QMessageBox dialogs, which looked like the error
+        # dialog "looping" when you tried to close it (closing one just
+        # revealed the next one queued behind it).
+        self.window.toggle_finished.connect(self._on_toggle_finished)
         self.tray.show()
 
         # Show the window once on startup.
@@ -227,18 +235,20 @@ class WgTray:
         self._toggle_worker = _ToggleWorker(name, active)
         self._toggle_worker.moveToThread(self._toggle_thread)
         self._toggle_thread.started.connect(self._toggle_worker.run)
-        # Connect to a slot on self.window (a real QObject with main-thread
-        # affinity) rather than a plain method on WgTray itself — WgTray
-        # is an ordinary Python object, not a QObject, so Qt has no thread
-        # context for it and a direct connection would invoke
-        # _on_toggle_finished on the worker's own thread. That then
-        # touches QMenu/QAction from off the main thread, logging "Cannot
-        # create children for a parent that is in a different thread" (or
-        # worse). Routing through self.window's own signal, which *is* a
-        # QObject living on the main thread, lets Qt's normal
-        # cross-thread auto-queuing do the right thing.
+        # Connect the worker's finished signal to self.window's own
+        # toggle_finished signal (re-emitting it), rather than to a plain
+        # method on WgTray directly — WgTray is an ordinary Python
+        # object, not a QObject, so Qt has no thread context for it and a
+        # direct connection would invoke the handler on the worker's own
+        # thread. That then touches QMenu/QAction from off the main
+        # thread, logging "Cannot create children for a parent that is in
+        # a different thread" (or worse). self.window *is* a QObject with
+        # main-thread affinity, so this lets Qt's normal cross-thread
+        # auto-queuing do the right thing. toggle_finished itself is only
+        # connected to _on_toggle_finished once, in __init__ — connecting
+        # it here too, per-toggle, was the bug behind stacked/looping
+        # error dialogs after a couple of failed toggles.
         self._toggle_worker.finished.connect(self.window.toggle_finished)
-        self.window.toggle_finished.connect(self._on_toggle_finished)
         self._toggle_worker.finished.connect(self._toggle_thread.quit)
         self._toggle_thread.finished.connect(self._cleanup_toggle_thread)
         self._toggle_thread.start()
