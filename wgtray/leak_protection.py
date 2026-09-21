@@ -17,6 +17,8 @@ Linux support (iptables/nftables) is a natural follow-up but out of
 scope for now. Windows kill switches need WFP, a much bigger lift, and
 aren't attempted here.
 """
+import hashlib
+import json
 import re
 import shutil
 from pathlib import Path
@@ -26,7 +28,22 @@ from .platform_utils import IS_MAC
 
 SCRIPT_NAME = "leak_protection_macos.sh"
 DEFAULT_ENDPOINT_PORT = "51820"
-PROTECTED_SUFFIX = ".protected"
+
+# wg-quick derives the network interface name from the config file's
+# basename and requires it to be <=15 characters (a Linux/BSD interface
+# name limit it enforces even on macOS) — see wg-quick's own regex:
+# [a-zA-Z0-9_=+.-]{1,15}\.conf$. A naive "<name>.protected.conf" blows
+# past that for almost any real tunnel name (e.g. "client1.protected" is
+# already 17 chars), so derived configs instead get a short, deterministic
+# name built from a hash of the original tunnel name: always well under
+# the limit regardless of how long or short the user's own name is.
+DERIVED_PREFIX = "wgtp"  # "wg tray protected"
+_MANIFEST_FILE_NAME = ".leak_protection_manifest.json"
+
+
+def _derived_stem(name):
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:10]
+    return f"{DERIVED_PREFIX}{digest}"
 
 
 def _bundled_script_path():
@@ -58,32 +75,56 @@ def _extract(pattern, text, default=None):
     return m.group(1).strip() if m else default
 
 
+def _manifest_path():
+    return CONFIGS_DIR / _MANIFEST_FILE_NAME
+
+
+def _load_manifest():
+    """{derived_stem: original_tunnel_name}, so is_protected_filename()
+    can recognize a derived config purely from its short hashed name,
+    without re-deriving every possible name's hash."""
+    path = _manifest_path()
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_manifest(manifest):
+    _manifest_path().write_text(json.dumps(manifest))
+
+
 def is_protected_filename(filename):
-    """True for a derived config's filename (e.g. 'client1.protected.conf'),
-    so callers can filter these out of the user-facing tunnel list — they're
-    generated artifacts living in the same directory as real configs, not
-    tunnels a user imported."""
-    return filename.endswith(f"{PROTECTED_SUFFIX}.conf")
+    """True for a derived config's filename (a short wgtp<hash>.conf),
+    so callers can filter these out of the user-facing tunnel list —
+    they're generated artifacts living in the same directory as real
+    configs, not tunnels a user imported."""
+    stem = filename[:-len(".conf")] if filename.endswith(".conf") else filename
+    return stem in _load_manifest()
 
 
 def protected_config_path(name):
-    return CONFIGS_DIR / f"{name}{PROTECTED_SUFFIX}.conf"
+    return CONFIGS_DIR / f"{_derived_stem(name)}.conf"
 
 
 def generate_protected_config(name):
     """
-    Read configs/<name>.conf, and write configs/<name>.protected.conf:
-    the same [Interface]/[Peer] content plus PostUp/PreDown lines that
-    invoke the leak-protection script. Returns the derived path.
+    Read configs/<name>.conf, and write a short-named derived config
+    (configs/wgtp<hash>.conf — see the module docstring for why it can't
+    just be "<name>.protected.conf"): the same [Interface]/[Peer] content
+    plus PostUp/PreDown lines that invoke the leak-protection script.
+    Returns the derived path.
     """
     if not IS_MAC:
         raise RuntimeError("Leak protection is currently macOS-only.")
 
-    if is_protected_filename(f"{name}.conf"):
-        # Guards against ever generating client1.protected.protected.conf —
-        # this shouldn't be reachable now that list_configs() filters
-        # derived files out, but fail loudly rather than silently stacking
-        # suffixes if something upstream regresses.
+    if name in _load_manifest().values():
+        # Guards against ever protecting an already-derived config's own
+        # name — unreachable in normal use since list_configs() filters
+        # derived files out, but fail loudly rather than silently
+        # generating nonsense if something upstream regresses.
         raise ValueError(f"'{name}' looks like an already-derived leak-protection config.")
 
     original = CONFIGS_DIR / f"{name}.conf"
@@ -120,11 +161,21 @@ def generate_protected_config(name):
     protected = protected_config_path(name)
     protected.write_text("\n".join(out) + "\n")
     protected.chmod(0o600)
+
+    manifest = _load_manifest()
+    manifest[protected.stem] = name
+    _save_manifest(manifest)
+
     return protected
 
 
 def remove_protected_config(name):
-    protected_config_path(name).unlink(missing_ok=True)
+    protected = protected_config_path(name)
+    protected.unlink(missing_ok=True)
+
+    manifest = _load_manifest()
+    manifest.pop(protected.stem, None)
+    _save_manifest(manifest)
 
 
 def is_supported():

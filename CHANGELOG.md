@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.2
+
+- **Fixed**: enabling the kill switch failed with `wg-quick: The config
+  file must be a valid interface name, followed by .conf` for almost any
+  real tunnel name. wg-quick derives the network interface name from the
+  config file's basename and rejects anything over 15 characters (a
+  Linux/BSD interface-name limit it enforces even on macOS) —
+  `<name>.protected.conf` blew past that for any tunnel name of 7+
+  characters (e.g. "client1.protected" is already 17). Derived configs
+  now use a short, deterministic name (`wgtp<hash>.conf`, always 14
+  characters) instead, with a small manifest file mapping it back to the
+  original tunnel name for the sidebar-filtering and lookup logic.
+
 ## 0.5.1
 
 - **Fixed**: the v0.5.0 GitHub Release shipped with no platform binaries
