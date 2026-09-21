@@ -279,26 +279,182 @@ def import_from_qr_image(image_path, name):
 
 
 # ---------------------------------------------------------------------
+# Theme (dark, Mullvad-style)
+# ---------------------------------------------------------------------
+
+ACCENT = "#3ddc84"
+ACCENT_DIM = "#2a9d5e"
+BG = "#1b1f24"
+BG_ALT = "#232830"
+BG_RAISED = "#2b313b"
+FG = "#e8ecef"
+FG_MUTED = "#8a929c"
+BORDER = "#333a44"
+
+APP_STYLESHEET = f"""
+QMainWindow, QWidget {{
+    background-color: {BG};
+    color: {FG};
+    font-size: 13px;
+}}
+
+QListWidget {{
+    background-color: {BG_ALT};
+    border: none;
+    outline: none;
+    padding: 6px;
+}}
+
+QListWidget::item {{
+    padding: 10px 12px;
+    border-radius: 6px;
+    margin: 2px 0;
+    color: {FG};
+}}
+
+QListWidget::item:selected {{
+    background-color: {BG_RAISED};
+    color: {ACCENT};
+}}
+
+QListWidget::item:hover:!selected {{
+    background-color: {BG_RAISED};
+}}
+
+QLabel {{
+    color: {FG};
+    background: transparent;
+}}
+
+QLabel#status-connected {{
+    color: {ACCENT};
+}}
+
+QLabel#status-disconnected {{
+    color: {FG_MUTED};
+}}
+
+QPushButton {{
+    background-color: {BG_RAISED};
+    color: {FG};
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    padding: 6px 14px;
+}}
+
+QPushButton:hover {{
+    border-color: {ACCENT_DIM};
+}}
+
+QPushButton:pressed {{
+    background-color: {BORDER};
+}}
+
+QPushButton:disabled {{
+    color: {FG_MUTED};
+    border-color: {BORDER};
+}}
+
+QPushButton#toggle-connect {{
+    background-color: {ACCENT};
+    color: #0c1210;
+    border: none;
+    font-weight: 600;
+}}
+
+QPushButton#toggle-connect:hover {{
+    background-color: {ACCENT_DIM};
+}}
+
+QPushButton#toggle-disconnect {{
+    background-color: transparent;
+    color: {FG};
+    border: 1px solid {BORDER};
+    font-weight: 600;
+}}
+
+QPushButton#toggle-disconnect:hover {{
+    border-color: #d9534f;
+    color: #d9534f;
+}}
+
+QFrame[frameShape="5"] {{
+    color: {BORDER};
+    max-width: 1px;
+}}
+
+QMenu {{
+    background-color: {BG_ALT};
+    color: {FG};
+    border: 1px solid {BORDER};
+    padding: 4px;
+}}
+
+QMenu::item {{
+    padding: 6px 24px 6px 12px;
+    border-radius: 4px;
+}}
+
+QMenu::item:selected {{
+    background-color: {BG_RAISED};
+    color: {ACCENT};
+}}
+
+QMenu::separator {{
+    height: 1px;
+    background: {BORDER};
+    margin: 4px 8px;
+}}
+"""
+
+
+# ---------------------------------------------------------------------
 # Icon (drawn in code so there's no external asset to bundle/trust)
 # ---------------------------------------------------------------------
 
 def make_icon(connected):
+    """Abstract tunnel glyph: two nodes joined by a connecting curve."""
+    from PySide6.QtGui import QPainterPath
+    from PySide6.QtCore import QPointF
+
     pix = QPixmap(64, 64)
     pix.fill(Qt.transparent)
     painter = QPainter(pix)
     painter.setRenderHint(QPainter.Antialiasing)
-    color = QColor("#3ddc84") if connected else QColor("#888888")
-    painter.setBrush(color)
+
+    color = QColor(ACCENT) if connected else QColor(FG_MUTED)
+    node_color = QColor("#ffffff") if connected else QColor("#cfd4d9")
+
+    node_r = 8
+    a = QPointF(18, 46)   # bottom-left node center
+    b = QPointF(46, 18)   # top-right node center
+
+    pen = painter.pen()
+    pen.setColor(color)
+    pen.setWidth(6)
+    pen.setCapStyle(Qt.RoundCap)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+
+    path = QPainterPath(a)
+    # Bow the connecting curve toward the top-left corner, away from the
+    # a-b diagonal, so it reads as an arc rather than a straight line.
+    path.quadTo(QPointF(14, 14), b)
+    painter.drawPath(path)
+
     painter.setPen(Qt.NoPen)
-    painter.drawEllipse(8, 8, 48, 48)
-    painter.setPen(QColor("white"))
-    font = QFont()
-    font.setBold(True)
-    font.setPointSize(22)
-    painter.setFont(font)
-    painter.drawText(pix.rect(), Qt.AlignCenter, "W")
+    painter.setBrush(node_color)
+    painter.drawEllipse(a, node_r, node_r)
+    painter.drawEllipse(b, node_r, node_r)
+
     painter.end()
     return QIcon(pix)
+
+
+def make_app_icon():
+    # A static, always-"connected"-colored variant used for window/taskbar
+    # icons, where a live connection state doesn't make sense as glyph color.
+    return make_icon(True)
 
 
 # ---------------------------------------------------------------------
@@ -368,6 +524,7 @@ class MainWindow(QMainWindow):
         detail_layout.addSpacing(16)
 
         self.toggle_btn = QPushButton("Connect")
+        self.toggle_btn.setObjectName("toggle-connect")
         self.toggle_btn.setFixedHeight(48)
         self.toggle_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.toggle_btn.setMinimumWidth(180)
@@ -422,18 +579,32 @@ class MainWindow(QMainWindow):
         if name is None:
             self.name_label.setText("No tunnels imported yet")
             self.status_label.setText("Use + .conf or + QR to add one")
+            self.status_label.setObjectName("status-disconnected")
             self.toggle_btn.setEnabled(False)
             self.toggle_btn.setText("Connect")
+            self.toggle_btn.setObjectName("toggle-connect")
+            self._repolish(self.status_label, self.toggle_btn)
             return
 
         self.toggle_btn.setEnabled(True)
         self.name_label.setText(name)
         if name == active:
             self.status_label.setText("● Connected")
+            self.status_label.setObjectName("status-connected")
             self.toggle_btn.setText("Disconnect")
+            self.toggle_btn.setObjectName("toggle-disconnect")
         else:
             self.status_label.setText("○ Disconnected")
+            self.status_label.setObjectName("status-disconnected")
             self.toggle_btn.setText("Connect")
+            self.toggle_btn.setObjectName("toggle-connect")
+        self._repolish(self.status_label, self.toggle_btn)
+
+    def _repolish(self, *widgets):
+        # Force QSS re-evaluation after changing objectName at runtime.
+        for w in widgets:
+            w.style().unpolish(w)
+            w.style().polish(w)
 
     def on_toggle_clicked(self):
         name = self.selected_name()
@@ -603,6 +774,10 @@ def main():
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    app.setApplicationName("wg-tray")
+    app.setApplicationDisplayName("wg-tray")
+    app.setStyleSheet(APP_STYLESHEET)
+    app.setWindowIcon(make_app_icon())
 
     if not QSystemTrayIcon.isSystemTrayAvailable():
         QMessageBox.critical(None, "wg-tray", "No system tray detected on this desktop.")
