@@ -628,17 +628,15 @@ class WgTray:
         self.rebuild_menu()
         self.tray.show()
 
-        self.tray.activated.connect(self.on_tray_activated)
+        # Show the window once on startup; after that, the tray icon just
+        # opens its menu (left-click) — "Open window..." brings it back.
+        self.show_window()
 
         # Poll connection state periodically in case it changes outside
         # this app (e.g. you ran wg-quick manually in a terminal).
         self.timer = QTimer()
         self.timer.timeout.connect(self.refresh_all)
         self.timer.start(5000)
-
-    def on_tray_activated(self, reason):
-        if reason == QSystemTrayIcon.Trigger:
-            self.show_window()
 
     def show_window(self):
         self.window.refresh()
