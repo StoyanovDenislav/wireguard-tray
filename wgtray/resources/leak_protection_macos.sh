@@ -69,7 +69,14 @@ snapshot_ipv6() {
     while IFS= read -r service; do
         [ -z "$service" ] && continue
         local v6_state
-        v6_state="$(networksetup -getinfo "$service" 2>/dev/null | awk -F': ' '/^IPv6: /{print $2; exit}')"
+        # Some hardware ports networksetup lists (e.g. an unconfigured
+        # Thunderbolt port) aren't recognized as real network services —
+        # `networksetup -getinfo` exits non-zero for those. Under
+        # set -o pipefail that failure propagates through the pipeline
+        # even though awk succeeds, and set -e would then abort the
+        # whole script over one irrelevant port. `|| true` makes this
+        # line best-effort, matching every other networksetup call here.
+        v6_state="$(networksetup -getinfo "$service" 2>/dev/null | awk -F': ' '/^IPv6: /{print $2; exit}')" || true
         printf '%s\t%s\n' "$service" "$v6_state" >> "$SNAPSHOT_FILE"
     done < <(physical_services)
 }
@@ -142,8 +149,12 @@ pass on utun9:0 all
 pass on lo0 all
 EOF
 
-    pfctl -a "$ANCHOR_NAME" -f "$PF_CONF" 2>/dev/null
-    pfctl -e 2>/dev/null || true
+    # Intentionally not silenced/guarded: if the kill switch's pf anchor
+    # fails to load, that's the one failure that should actually abort
+    # (via set -e) and be visible in wg-quick's PostUp output — silently
+    # continuing would mean the "kill switch" checkbox did nothing.
+    pfctl -a "$ANCHOR_NAME" -f "$PF_CONF"
+    pfctl -e 2>/dev/null || true  # already-enabled is a harmless failure
 }
 
 do_down() {

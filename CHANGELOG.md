@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.1
+
+- **Fixed**: enabling the kill switch could fail to connect at all, with
+  wg-quick tearing the interface back down right after running the
+  PostUp hook and no visible error. Root cause: `leak_protection_macos.sh`
+  runs under `set -euo pipefail`, and its IPv6-snapshot step piped
+  `networksetup -getinfo "$service"` into `awk` without guarding the
+  pipeline's exit status — on a Mac with an unconfigured Thunderbolt
+  port (a real hardware port `networksetup -listallhardwareports` lists,
+  but not one `-getinfo` recognizes as an actual network service), that
+  command fails, `pipefail` propagates it, and `set -e` aborts the
+  entire script before it ever reaches the actual pf kill-switch step.
+  Also stopped silencing the pf anchor load's own stderr, so a genuine
+  kill-switch failure is visible in wg-quick's output instead of being
+  thrown away.
+
 ## 0.6.0
 
 - **Added**: detection of another VPN/tunnel already holding the default
