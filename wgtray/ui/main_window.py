@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from .. import leak_protection
 from ..platform_utils import IS_MAC
 from ..state import leak_protection_enabled, list_configs, set_leak_protection
+from .config_editor_dialog import ConfigEditorDialog
 
 
 class MainWindow(QMainWindow):
@@ -113,6 +114,16 @@ class MainWindow(QMainWindow):
         toggle_row.addStretch(1)
         detail_layout.addLayout(toggle_row)
 
+        detail_layout.addSpacing(8)
+
+        self.edit_config_btn = QPushButton("Edit config…")
+        self.edit_config_btn.clicked.connect(self.on_edit_config_clicked)
+        edit_row = QHBoxLayout()
+        edit_row.addStretch(1)
+        edit_row.addWidget(self.edit_config_btn)
+        edit_row.addStretch(1)
+        detail_layout.addLayout(edit_row)
+
         detail_layout.addStretch(2)
 
         root.addWidget(detail, 1)
@@ -162,6 +173,7 @@ class MainWindow(QMainWindow):
             self.toggle_btn.setText("Connect")
             self.toggle_btn.setObjectName("toggle-connect")
             self.leak_protection_box.setEnabled(False)
+            self.edit_config_btn.setEnabled(False)
             self._repolish(self.status_label, self.toggle_btn)
             return
 
@@ -172,6 +184,11 @@ class MainWindow(QMainWindow):
         self.leak_protection_box.setChecked(leak_protection_enabled(name))
         self.leak_protection_box.setEnabled(name != active)
         self.leak_protection_box.blockSignals(False)
+
+        self.edit_config_btn.setEnabled(name != active)
+        self.edit_config_btn.setToolTip(
+            "Disconnect this tunnel first to edit its config." if name == active else ""
+        )
 
         if name == active:
             self.status_label.setText("● Connected")
@@ -224,3 +241,10 @@ class MainWindow(QMainWindow):
         if name is None:
             return
         self.controller.toggle(name)
+
+    def on_edit_config_clicked(self):
+        name = self.selected_name()
+        if name is None:
+            return
+        dlg = ConfigEditorDialog(name, self)
+        dlg.exec()

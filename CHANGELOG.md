@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.0
+
+- **Added**: a config editor for tweaking a tunnel's .conf directly —
+  "Edit config…" in the tunnel detail pane. Two modes, switchable
+  without losing edits: a structured form for the common fields
+  (PrivateKey, Address, DNS, ListenPort, MTU, PublicKey, PresharedKey,
+  Endpoint, AllowedIPs, PersistentKeepalive) that leaves everything
+  else in the file untouched, and a raw-text mode for anything the form
+  doesn't cover. Validates on save (both sections present, the fields
+  wg-quick actually needs to bring the tunnel up) before writing.
+  Disabled while the tunnel is connected.
+
 ## 0.6.1
 
 - **Fixed**: enabling the kill switch could fail to connect at all, with

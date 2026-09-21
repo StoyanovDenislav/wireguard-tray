@@ -63,6 +63,8 @@ than the latest tagged release.
   and installs an update in place per OS (see "Update checking and
   installing" below).
 - `theme.py` — the dark QSS stylesheet and the code-drawn tunnel icon.
+- `config_editor.py` + `ui/config_editor_dialog.py` — the raw-text/
+  structured-form .conf editor (see "Editing a tunnel's config" below).
 - `ui/main_window.py`, `ui/dialogs.py` — the sidebar window, Settings, and
   changelog dialogs.
 - `tray.py` — the tray icon/menu, wiring the above together.
@@ -112,6 +114,29 @@ stores a password itself — it always hands off to your OS's native prompt:
 - Linux: `pkexec` (polkit's graphical sudo prompt)
 - macOS: `osascript` administrator-privileges dialog
 - Windows: native UAC prompt
+
+## Editing a tunnel's config
+
+Sometimes you need to tweak something wg-tray's UI doesn't expose —
+add a second `AllowedIPs` range, set a custom `MTU`, add your own
+`PostUp`/`PreDown` hook, etc. "Edit config…" in the tunnel detail pane
+opens the config in either of two modes, switchable without losing
+your edits:
+
+- **Form**: labeled fields for the common ones (PrivateKey, Address,
+  DNS, ListenPort, MTU, PublicKey, PresharedKey, Endpoint, AllowedIPs,
+  PersistentKeepalive). Anything else in the file — comments, hooks,
+  directives the form doesn't list — is left exactly as-is; the form
+  only ever rewrites the specific lines for fields you actually change.
+- **Raw text**: the file's exact contents, for anything the form
+  doesn't cover.
+
+Saving validates that the result still has everything wg-quick needs to
+bring the tunnel up at all (both sections present, PrivateKey, Address,
+PublicKey, AllowedIPs) before writing — it won't silently save something
+that's obviously going to fail to connect. Disabled while that tunnel is
+connected, since editing the file it's currently using can leave it in
+a mismatched state until you reconnect.
 
 ## Other VPN conflict detection (Linux/macOS)
 
