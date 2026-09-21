@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.10.0
+
+- **Added**: optional per-tunnel passphrase encryption of the private
+  key at rest (macOS + Linux). "Set passphrase…" in the config editor
+  replaces the plaintext `PrivateKey` line with an AES-256-GCM blob
+  (scrypt-derived key). Off by default. Connecting prompts for the
+  passphrase every time — never cached — decrypts the key into a
+  private `~/.config/wg-tray/runtime/` directory (`0700`/`0600`,
+  created with those permissions from the start rather than
+  write-then-chmod) just long enough for wg-quick to read it, then
+  deletes it immediately. Disconnecting doesn't need the passphrase,
+  since wg-quick's teardown never reads `PrivateKey`'s actual value.
+  "Change passphrase…" lets you re-key or remove encryption entirely
+  after confirming the current one. Not yet supported on Windows
+  (`wireguard.exe` reads its config directly, bypassing wg-quick
+  entirely, so there's no interception point).
+- **Changed**: config imports and the config editor's save now create
+  files with `0600` permissions from the moment they exist, instead of
+  write-then-chmod (which left a brief window at default,
+  umask-dependent permissions). Same fix applied to the leak-protection
+  scripts' own temp files (the macOS pf ruleset, the Linux nftables
+  ruleset) — not sensitive content, but tightened for consistency.
+- New dependency: `cryptography` (AES-GCM + scrypt). Not yet verified
+  in an actual PyInstaller build — no environment available here to
+  compile-test that its native OpenSSL bindings bundle correctly.
+
 ## 0.9.1
 
 - **Fixed**: connecting with the kill switch enabled failed on every

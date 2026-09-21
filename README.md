@@ -65,6 +65,8 @@ than the latest tagged release.
 - `theme.py` — the dark QSS stylesheet and the code-drawn tunnel icon.
 - `config_editor.py` + `ui/config_editor_dialog.py` — the raw-text/
   structured-form .conf editor (see "Editing a tunnel's config" below).
+- `key_encryption.py` — optional per-tunnel passphrase encryption of the
+  private key at rest (see "Encrypting a tunnel's private key" below).
 - `ui/main_window.py`, `ui/dialogs.py` — the sidebar window, Settings, and
   changelog dialogs.
 - `tray.py` — the tray icon/menu, wiring the above together.
@@ -137,6 +139,36 @@ PublicKey, AllowedIPs) before writing — it won't silently save something
 that's obviously going to fail to connect. Disabled while that tunnel is
 connected, since editing the file it's currently using can leave it in
 a mismatched state until you reconnect.
+
+## Encrypting a tunnel's private key at rest (macOS + Linux, opt-in)
+
+By default, a tunnel's `.conf` — including its `PrivateKey` — sits on
+disk as plain text (with `0600` permissions, but still plainly readable
+by root or anyone with access to the file, e.g. a stolen laptop with an
+unencrypted disk). "Set passphrase…" in the config editor's Encryption
+row replaces the `PrivateKey` line with an AES-256-GCM-encrypted blob
+(key derived from your passphrase via scrypt) instead of the raw key.
+Off by default; only applies to tunnels you explicitly set a passphrase
+for.
+
+Once set, connecting that tunnel prompts for the passphrase every time
+— it's never cached, not even for the app's current run. The decrypted
+key only ever touches disk in a private runtime directory
+(`~/.config/wg-tray/runtime/`, `0700`, files `0600`), just long enough
+for `wg-quick` to read it at startup, and is deleted immediately after
+(successful connect or not). Disconnecting doesn't need the passphrase
+— wg-quick's teardown path never reads `PrivateKey`'s actual value.
+
+"Change passphrase…" (same button, once one's set) asks for the current
+passphrase first, then lets you set a new one or remove encryption
+entirely (back to plain text). AES-GCM is authenticated, so a wrong
+passphrase or a corrupted/tampered blob fails cleanly with an error
+rather than silently producing garbage.
+
+Not yet supported on Windows — `wireguard.exe` reads its config
+directly rather than going through `wg-quick`, so there's no point in
+the flow to intercept and decrypt it. Encrypted tunnels currently can't
+be connected on Windows; disconnect and editing are unaffected.
 
 ## Other VPN conflict detection (Linux/macOS)
 

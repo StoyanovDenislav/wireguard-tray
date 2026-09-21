@@ -8,15 +8,15 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 
-from . import APP_VERSION
-from .state import list_configs, load_state, save_state
+from . import APP_VERSION, key_encryption
+from .state import config_path, list_configs, load_state, save_state
 from .theme import make_icon
 from .ui.dialogs import ChangelogDialog, SettingsDialog, VpnConflictDialog
 from .ui.main_window import MainWindow
 from .updater import fetch_latest_release, fetch_release_notes_for, is_newer_version
 from .wireguard import (
     HAVE_QR, check_for_conflicting_vpn, connect, disconnect, import_conf_file,
-    import_from_qr_image,
+    import_from_qr_image, is_encrypted,
 )
 
 POLL_INTERVAL_MS = 5_000
@@ -37,10 +37,11 @@ class _ToggleWorker(QObject):
     """
     finished = Signal(bool, str)  # ok, error_message ("" if ok)
 
-    def __init__(self, target_name, active_name):
+    def __init__(self, target_name, active_name, decrypted_private_key=None):
         super().__init__()
         self.target_name = target_name
         self.active_name = active_name
+        self.decrypted_private_key = decrypted_private_key
 
     def run(self):
         # An uncaught exception here would kill the worker silently (Qt
@@ -68,7 +69,7 @@ class _ToggleWorker(QObject):
                 self.finished.emit(False, f"Failed to disconnect '{active}' first:\n{out}")
                 return
 
-        ok, out = connect(name)
+        ok, out = connect(name, self.decrypted_private_key)
         self.finished.emit(ok, "" if ok else f"Failed to connect:\n{out}")
 
 
@@ -216,23 +217,58 @@ class WgTray:
 
     def toggle(self, name):
         active = self.current_active()
+        connecting = active != name
 
         # The VPN-conflict check/dialog only matters when we're about to
         # connect (not when just disconnecting), and needs to run on the
         # main thread since it can show a dialog.
-        if active != name and not self._resolve_vpn_conflict():
+        if connecting and not self._resolve_vpn_conflict():
             return
 
-        self._start_toggle_worker(name, active)
+        decrypted_key = None
+        if connecting and is_encrypted(name):
+            decrypted_key = self._prompt_for_passphrase(name)
+            if decrypted_key is None:
+                return  # cancelled, or wrong passphrase given up on
 
-    def _start_toggle_worker(self, name, active):
+        self._start_toggle_worker(name, active, decrypted_key)
+
+    def _prompt_for_passphrase(self, name):
+        """
+        Prompts for this tunnel's passphrase and returns the decrypted
+        private key, or None if the user cancels or gives up after a
+        wrong attempt. Runs on the main thread (called from toggle(),
+        before the connect worker starts) since it needs a Qt dialog —
+        the passphrase itself is never cached; every connect re-prompts.
+        """
+        while True:
+            passphrase, ok = QInputDialog.getText(
+                self.window, "Tunnel passphrase",
+                f"Enter the passphrase for '{name}':",
+                QLineEdit.Password,
+            )
+            if not ok:
+                return None
+            try:
+                marker = key_encryption.get_encrypted_marker(config_path(name).read_text())
+                return key_encryption.decrypt_key(marker, passphrase)
+            except key_encryption.DecryptionError as e:
+                retry = QMessageBox.question(
+                    self.window, "Wrong passphrase",
+                    f"{e}\n\nTry again?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
+                )
+                if retry != QMessageBox.Yes:
+                    return None
+
+    def _start_toggle_worker(self, name, active, decrypted_key=None):
         if getattr(self, "_toggle_thread", None) is not None:
             return  # a toggle is already in flight; ignore re-clicks
 
         self.window.set_toggle_busy(True)
 
         self._toggle_thread = QThread()
-        self._toggle_worker = _ToggleWorker(name, active)
+        self._toggle_worker = _ToggleWorker(name, active, decrypted_key)
         self._toggle_worker.moveToThread(self._toggle_thread)
         self._toggle_thread.started.connect(self._toggle_worker.run)
         # Connect the worker's finished signal to self.window's own

@@ -1,15 +1,17 @@
 """Edit a tunnel's raw .conf, either as plain text or via a structured
 form for the common fields — the user picks per the "just in case I need
 to tweak something wg-tray's UI doesn't expose" escape hatch."""
+import os
+
 from PySide6.QtWidgets import (
-    QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPlainTextEdit, QPushButton, QStackedWidget, QVBoxLayout,
-    QWidget,
+    QDialogButtonBox, QFormLayout, QHBoxLayout, QInputDialog, QLabel,
+    QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QStackedWidget,
+    QVBoxLayout, QWidget,
 )
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QDialog
 
-from .. import config_editor
+from .. import config_editor, key_encryption
 from ..state import config_path
 
 
@@ -87,8 +89,16 @@ class ConfigEditorDialog(QDialog):
             edit = QLineEdit()
             if field == "PrivateKey":
                 edit.setEchoMode(QLineEdit.Password)
+                self.private_key_edit = edit
             self.field_inputs[("Interface", field)] = edit
             form.addRow(f"{field}:", edit)
+
+        passphrase_row = QHBoxLayout()
+        self.passphrase_btn = QPushButton()
+        self.passphrase_btn.clicked.connect(self._on_passphrase_clicked)
+        passphrase_row.addWidget(self.passphrase_btn)
+        passphrase_row.addStretch(1)
+        form.addRow("Encryption:", passphrase_row)
 
         for field in config_editor.PEER_FIELDS:
             edit = QLineEdit()
@@ -121,9 +131,104 @@ class ConfigEditorDialog(QDialog):
         for (section, field), edit in self.field_inputs.items():
             edit.setText(config_editor.get_field(text, section, field))
 
+        encrypted = key_encryption.is_encrypted(text)
+        # The PrivateKey field shows/edits the real key when not
+        # encrypted (as before), but is never a place to view or type a
+        # plaintext key once encryption is on — that's the whole point.
+        # Setting/removing/changing the passphrase happens through the
+        # dedicated button instead, which knows how to actually decrypt
+        # first when it needs the real key (e.g. to change the passphrase).
+        self.private_key_edit.setEnabled(not encrypted)
+        if encrypted:
+            self.private_key_edit.setText("")
+            self.private_key_edit.setPlaceholderText("(encrypted — see Encryption below)")
+        else:
+            self.private_key_edit.setPlaceholderText("")
+        self.passphrase_btn.setText("Change passphrase…" if encrypted else "Set passphrase…")
+
+    def _on_passphrase_clicked(self):
+        text = self._current_text()
+        encrypted = key_encryption.is_encrypted(text)
+
+        if encrypted:
+            # Changing (or removing) requires the current passphrase
+            # first, to actually get at the real key.
+            current_passphrase, ok = QInputDialog.getText(
+                self, "Current passphrase",
+                "Enter the current passphrase to change or remove it:",
+                QLineEdit.Password,
+            )
+            if not ok:
+                return
+            try:
+                decrypted_text = key_encryption.decrypt_config(text, current_passphrase)
+            except key_encryption.DecryptionError as e:
+                QMessageBox.warning(self, "Wrong passphrase", str(e))
+                return
+
+            action = QMessageBox.question(
+                self, "Change or remove?",
+                "Set a new passphrase, or remove encryption entirely and "
+                "store the key in plain text again?",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                QMessageBox.Yes,
+            )
+            # Yes = change to a new passphrase, No = remove encryption
+            if action == QMessageBox.Cancel:
+                return
+            if action == QMessageBox.No:
+                new_text = decrypted_text
+            else:
+                new_passphrase = self._prompt_new_passphrase()
+                if new_passphrase is None:
+                    return
+                new_text = key_encryption.encrypt_config(decrypted_text, new_passphrase)
+        else:
+            new_passphrase = self._prompt_new_passphrase()
+            if new_passphrase is None:
+                return
+            try:
+                new_text = key_encryption.encrypt_config(text, new_passphrase)
+            except ValueError as e:
+                QMessageBox.warning(self, "Can't encrypt", str(e))
+                return
+
+        if self.stack.currentIndex() == 1:
+            self.raw_edit.setPlainText(new_text)
+        self._load_into_form(new_text)
+        if self.stack.currentIndex() == 0:
+            self.raw_edit.setPlainText(new_text)
+
+    def _prompt_new_passphrase(self):
+        while True:
+            passphrase, ok = QInputDialog.getText(
+                self, "New passphrase", "Enter a new passphrase:", QLineEdit.Password
+            )
+            if not ok:
+                return None
+            if not passphrase:
+                QMessageBox.warning(self, "Empty passphrase", "Passphrase can't be empty.")
+                continue
+            confirm, ok = QInputDialog.getText(
+                self, "Confirm passphrase", "Enter it again to confirm:", QLineEdit.Password
+            )
+            if not ok:
+                return None
+            if confirm != passphrase:
+                QMessageBox.warning(self, "Doesn't match", "The two entries didn't match.")
+                continue
+            return passphrase
+
     def _text_from_form(self):
         text = self.raw_edit.toPlainText() or self._original_text
         for (section, field), edit in self.field_inputs.items():
+            if edit is self.private_key_edit and not edit.isEnabled():
+                # Encrypted: the field is a placeholder, not real content —
+                # writing its (empty) text would blow away the encrypted
+                # marker. Leave PrivateKey exactly as it already is in
+                # `text`; Set/Change/Remove passphrase is the only way to
+                # touch it while encrypted.
+                continue
             text = config_editor.set_field(text, section, field, edit.text().strip())
         return text
 
@@ -156,5 +261,11 @@ class ConfigEditorDialog(QDialog):
         if proceed != QMessageBox.Yes:
             return
 
-        self.path.write_text(text)
+        # 0600 from creation, not write-then-chmod — this file may hold a
+        # plaintext PrivateKey (e.g. right after removing encryption via
+        # the button above), and write-then-chmod leaves a brief window
+        # at default, umask-dependent permissions.
+        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
         self.accept()

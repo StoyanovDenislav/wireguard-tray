@@ -148,6 +148,7 @@ pass on utun8:0 all
 pass on utun9:0 all
 pass on lo0 all
 EOF
+    chmod 600 "$PF_CONF"
 
     # Intentionally not silenced/guarded: if the kill switch's pf anchor
     # fails to load, that's the one failure that should actually abort

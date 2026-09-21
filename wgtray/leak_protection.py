@@ -22,6 +22,7 @@ attempted here.
 """
 import hashlib
 import json
+import os
 import re
 import shutil
 from pathlib import Path
@@ -186,8 +187,15 @@ def generate_protected_config(name):
             inserted = True
 
     protected = protected_config_path(name)
-    protected.write_text("\n".join(out) + "\n")
-    protected.chmod(0o600)
+    # 0600 from creation, not write-then-chmod — this file can contain a
+    # plaintext PrivateKey (leak protection copies whatever's in the
+    # original, encrypted or not — see wireguard._effective_config_path
+    # for where an encrypted one gets its key substituted back in before
+    # this function is even called for that combination), and write-then-
+    # chmod leaves a brief window at default, umask-dependent permissions.
+    fd = os.open(protected, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("\n".join(out) + "\n")
 
     manifest = _load_manifest()
     manifest[protected.stem] = name

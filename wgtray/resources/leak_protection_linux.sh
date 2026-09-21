@@ -131,6 +131,7 @@ do_up() {
     # there's never a window with a half-applied ruleset. ---
     local nft_conf
     nft_conf="$(mktemp)"
+    chmod 600 "$nft_conf"
     {
         echo "table inet $TABLE_NAME {"
         echo "    chain output {"
