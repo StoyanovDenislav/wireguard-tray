@@ -23,16 +23,18 @@ import platform
 import shutil
 import subprocess
 import json
+import urllib.request
+import urllib.error
 from pathlib import Path
 
 from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QMessageBox, QFileDialog,
     QInputDialog, QLineEdit, QMainWindow, QWidget, QListWidget,
     QListWidgetItem, QHBoxLayout, QVBoxLayout, QPushButton, QLabel,
-    QFrame, QSizePolicy
+    QFrame, QSizePolicy, QDialog, QCheckBox, QTextBrowser, QDialogButtonBox
 )
-from PySide6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor, QFont, QCloseEvent
-from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor, QFont, QCloseEvent, QDesktopServices
+from PySide6.QtCore import Qt, QTimer, QSize, QUrl
 
 try:
     from pyzbar.pyzbar import decode as qr_decode
@@ -40,6 +42,11 @@ try:
     HAVE_QR = True
 except ImportError:
     HAVE_QR = False
+
+APP_VERSION = "0.2.1"
+GITHUB_REPO = "StoyanovDenislav/wireguard-tray"
+RELEASES_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+RELEASES_PAGE_URL = f"https://github.com/{GITHUB_REPO}/releases"
 
 APP_DIR = Path.home() / ".config" / "wg-tray"
 CONFIGS_DIR = APP_DIR / "configs"
@@ -160,18 +167,29 @@ def _shell_quote(s):
 # Config + state management
 # ---------------------------------------------------------------------
 
+DEFAULT_STATE = {
+    "active": None,
+    "seen_version": None,
+    "auto_update_check": False,
+}
+
+
 def ensure_dirs():
     CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
     if not STATE_FILE.exists():
-        STATE_FILE.write_text(json.dumps({"active": None}))
+        STATE_FILE.write_text(json.dumps(DEFAULT_STATE))
 
 
 def load_state():
     ensure_dirs()
     try:
-        return json.loads(STATE_FILE.read_text())
+        state = json.loads(STATE_FILE.read_text())
     except (json.JSONDecodeError, FileNotFoundError):
-        return {"active": None}
+        state = {}
+    # Backfill any keys older state files on disk don't have yet.
+    for key, default in DEFAULT_STATE.items():
+        state.setdefault(key, default)
+    return state
 
 
 def save_state(state):
@@ -185,6 +203,68 @@ def list_configs():
 
 def config_path(name):
     return CONFIGS_DIR / f"{name}.conf"
+
+
+# ---------------------------------------------------------------------
+# Update checking
+#
+# Privacy note: this never runs unless the user clicks "Check for
+# updates" or has explicitly opted in to automatic checks (off by
+# default). It's a single unauthenticated GET to GitHub's public
+# releases API — same as opening the Releases page in a browser. No
+# hardware IDs, no analytics, no custom telemetry server.
+# ---------------------------------------------------------------------
+
+def _parse_version(v):
+    v = v.lstrip("v")
+    parts = []
+    for p in v.split("."):
+        digits = "".join(c for c in p if c.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
+
+
+def is_newer_version(candidate, current):
+    return _parse_version(candidate) > _parse_version(current)
+
+
+def fetch_latest_release():
+    """
+    Hit GitHub's public releases API. Returns a dict with 'version',
+    'notes' (the release body — our CI auto-fills this from commits via
+    generate_release_notes), and 'url', or None on any failure (offline,
+    rate-limited, etc. all fail silently — this is a nice-to-have, never
+    something that should interrupt the user).
+    """
+    try:
+        req = urllib.request.Request(
+            RELEASES_API_URL,
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "wg-tray"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return {
+            "version": data.get("tag_name", "").lstrip("v"),
+            "notes": data.get("body", "").strip(),
+            "url": data.get("html_url", RELEASES_PAGE_URL),
+        }
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError):
+        return None
+
+
+def fetch_release_notes_for(version):
+    """Look up the changelog body for a specific tag (e.g. after an
+    update), falling back to None if it can't be fetched."""
+    try:
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/tags/v{version}"
+        req = urllib.request.Request(
+            url, headers={"Accept": "application/vnd.github+json", "User-Agent": "wg-tray"}
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return data.get("body", "").strip()
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError):
+        return None
 
 
 # ---------------------------------------------------------------------
@@ -496,6 +576,13 @@ class MainWindow(QMainWindow):
         sidebar_buttons.addWidget(import_qr_btn)
         sidebar_layout.addLayout(sidebar_buttons)
 
+        settings_row = QHBoxLayout()
+        settings_row.setContentsMargins(8, 0, 8, 8)
+        settings_btn = QPushButton("Settings…")
+        settings_btn.clicked.connect(self.controller.show_settings)
+        settings_row.addWidget(settings_btn)
+        sidebar_layout.addLayout(settings_row)
+
         root.addWidget(sidebar)
 
         divider = QFrame()
@@ -614,6 +701,123 @@ class MainWindow(QMainWindow):
 
 
 # ---------------------------------------------------------------------
+# Settings dialog
+# ---------------------------------------------------------------------
+
+class SettingsDialog(QDialog):
+    def __init__(self, controller, parent=None):
+        super().__init__(parent)
+        self.controller = controller
+        self.setWindowTitle("Settings")
+        self.setMinimumWidth(420)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(14)
+
+        version_label = QLabel(f"wg-tray v{APP_VERSION}")
+        version_font = QFont()
+        version_font.setBold(True)
+        version_label.setFont(version_font)
+        layout.addWidget(version_label)
+
+        state = load_state()
+
+        self.auto_check_box = QCheckBox("Automatically check for updates")
+        self.auto_check_box.setChecked(bool(state.get("auto_update_check")))
+        self.auto_check_box.toggled.connect(self.on_auto_toggle)
+        layout.addWidget(self.auto_check_box)
+
+        privacy_note = QLabel(
+            "When enabled, wg-tray periodically makes a single anonymous\n"
+            "request to GitHub's public release list to see if a newer\n"
+            "version exists. No account, hardware ID, or usage data is\n"
+            "ever sent — same as opening the Releases page in a browser."
+        )
+        privacy_note.setWordWrap(True)
+        privacy_note.setObjectName("status-disconnected")
+        layout.addWidget(privacy_note)
+
+        check_row = QHBoxLayout()
+        self.check_btn = QPushButton("Check for updates now")
+        self.check_btn.clicked.connect(self.on_check_clicked)
+        check_row.addWidget(self.check_btn)
+        check_row.addStretch(1)
+        layout.addLayout(check_row)
+
+        self.result_label = QLabel("")
+        self.result_label.setWordWrap(True)
+        layout.addWidget(self.result_label)
+
+        layout.addStretch(1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(self.close)
+        buttons.accepted.connect(self.close)
+        layout.addWidget(buttons)
+
+    def on_auto_toggle(self, checked):
+        state = load_state()
+        state["auto_update_check"] = checked
+        save_state(state)
+
+    def on_check_clicked(self):
+        self.check_btn.setEnabled(False)
+        self.result_label.setText("Checking…")
+        QApplication.processEvents()
+
+        release = fetch_latest_release()
+        self.check_btn.setEnabled(True)
+
+        if release is None:
+            self.result_label.setText(
+                "Couldn't reach GitHub to check for updates. Try again later."
+            )
+            return
+
+        if is_newer_version(release["version"], APP_VERSION):
+            self.result_label.setText(
+                f"A newer version is available: v{release['version']}"
+            )
+            open_btn = QPushButton(f"Download v{release['version']}…")
+            open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(release["url"])))
+            self.layout().insertWidget(self.layout().count() - 1, open_btn)
+        else:
+            self.result_label.setText("You're up to date.")
+
+
+# ---------------------------------------------------------------------
+# Changelog dialog (shown once after an update)
+# ---------------------------------------------------------------------
+
+class ChangelogDialog(QDialog):
+    def __init__(self, version, notes, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("What's new")
+        self.resize(480, 360)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(14)
+
+        title = QLabel(f"wg-tray v{version}")
+        title_font = QFont()
+        title_font.setPointSize(16)
+        title_font.setBold(True)
+        title.setFont(title_font)
+        layout.addWidget(title)
+
+        notes_view = QTextBrowser()
+        notes_view.setOpenExternalLinks(True)
+        notes_view.setMarkdown(notes or "_No changelog notes available for this release._")
+        layout.addWidget(notes_view, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok)
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
+
+
+# ---------------------------------------------------------------------
 # Tray application
 # ---------------------------------------------------------------------
 
@@ -631,6 +835,7 @@ class WgTray:
         # Show the window once on startup; after that, the tray icon just
         # opens its menu (left-click) — "Open window..." brings it back.
         self.show_window()
+        self.maybe_show_changelog()
 
         # Poll connection state periodically in case it changes outside
         # this app (e.g. you ran wg-quick manually in a terminal).
@@ -638,11 +843,47 @@ class WgTray:
         self.timer.timeout.connect(self.refresh_all)
         self.timer.start(5000)
 
+        # Opt-in only (off by default) — see SettingsDialog's privacy note.
+        self.update_timer = QTimer()
+        self.update_timer.timeout.connect(self.maybe_auto_check_update)
+        self.update_timer.start(6 * 60 * 60 * 1000)  # every 6 hours
+        self.maybe_auto_check_update()
+
     def show_window(self):
         self.window.refresh()
         self.window.show()
         self.window.raise_()
         self.window.activateWindow()
+
+    def show_settings(self):
+        dlg = SettingsDialog(self, self.window)
+        dlg.exec()
+
+    def maybe_show_changelog(self):
+        state = load_state()
+        seen = state.get("seen_version")
+        if seen == APP_VERSION:
+            return
+        # First-ever launch (no seen_version yet) shouldn't show a changelog
+        # popup — only show it when upgrading from a previously-seen version.
+        if seen is not None:
+            notes = fetch_release_notes_for(APP_VERSION)
+            if notes is not None:
+                ChangelogDialog(APP_VERSION, notes, self.window).exec()
+        state["seen_version"] = APP_VERSION
+        save_state(state)
+
+    def maybe_auto_check_update(self):
+        if not load_state().get("auto_update_check"):
+            return
+        release = fetch_latest_release()
+        if release and is_newer_version(release["version"], APP_VERSION):
+            self.tray.showMessage(
+                "wg-tray update available",
+                f"Version {release['version']} is available. Open Settings to download it.",
+                QSystemTrayIcon.Information,
+                8000,
+            )
 
     def current_active(self):
         return load_state().get("active")
@@ -685,6 +926,10 @@ class WgTray:
         open_window_action = QAction("Open window…", self.menu)
         open_window_action.triggered.connect(self.show_window)
         self.menu.addAction(open_window_action)
+
+        settings_action = QAction("Settings…", self.menu)
+        settings_action.triggered.connect(self.show_settings)
+        self.menu.addAction(settings_action)
 
         self.menu.addSeparator()
         quit_action = QAction("Quit", self.menu)

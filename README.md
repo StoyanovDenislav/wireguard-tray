@@ -79,12 +79,37 @@ stores a password itself — it always hands off to your OS's native prompt:
 - macOS: `osascript` administrator-privileges dialog
 - Windows: native UAC prompt
 
+## Update checking
+
+wg-tray never phones home on its own. There's no background process, no
+bundled analytics SDK, and no update check runs unless you trigger it:
+
+- **Settings → Check for updates now**: a single, one-off, unauthenticated
+  GET to GitHub's public releases API (`api.github.com`) — the same request
+  your browser makes if you open the Releases page yourself. No account,
+  hardware ID, or usage data is attached.
+- **Settings → Automatically check for updates**: an opt-in toggle,
+  **off by default**. When enabled, it repeats that same request every few
+  hours and shows a tray notification if a newer version exists. Turning it
+  on doesn't change what's sent — same anonymous request, just on a timer.
+  It never auto-downloads or auto-installs anything; you still choose when
+  and whether to grab the new build.
+
+After you install an update, wg-tray shows a one-time "What's new" screen
+pulled from that version's GitHub Release notes.
+
 ## Releasing a new version
 
 Push a tag like `v0.2.0` — GitHub Actions builds all three platforms and
-attaches them to a new GitHub Release automatically.
+attaches them to a new GitHub Release automatically. The release notes
+GitHub generates for that tag double as the in-app changelog shown to
+users after they update, so a clear commit history matters here.
 
 ```bash
 git tag v0.2.0
 git push origin v0.2.0
 ```
+
+Also bump `APP_VERSION` in [wg_tray.py](wg_tray.py) to match the tag —
+it's what the app compares against GitHub's latest release to decide if
+an update is available, and what gates the one-time changelog popup.
