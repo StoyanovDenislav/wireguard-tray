@@ -57,8 +57,8 @@ than the latest tagged release.
 - `paths.py` / `state.py` — on-disk config dir + persisted state (active
   tunnel, update-check preferences).
 - `wireguard.py` — connect/disconnect and config import (.conf, QR image).
-- `leak_protection.py` + `resources/leak_protection_macos.sh` — the
-  opt-in macOS kill switch/DNS/IPv6 guard (see below).
+- `leak_protection.py` + `resources/leak_protection_{macos,linux}.sh` —
+  the opt-in kill switch/DNS/IPv6 guard (see below).
 - `updater.py` — GitHub releases API check; `self_update.py` — downloads
   and installs an update in place per OS (see "Update checking and
   installing" below).
@@ -161,56 +161,65 @@ guessed or improvised for VPNs it doesn't specifically recognize; those
 just get named so you can quit them yourself. You can also choose
 "Connect anyway" if you know what you're doing.
 
-## Kill switch + leak protection (macOS only, opt-in)
+## Kill switch + leak protection (macOS + Linux, opt-in)
 
-Per-tunnel checkbox: "Kill switch + leak protection (macOS)". Off by
-default — enabling it doesn't touch other tunnels, and existing configs
-keep working exactly as before if you leave it off. Checking it shows a
+Per-tunnel checkbox: "Kill switch + leak protection". Off by default —
+enabling it doesn't touch other tunnels, and existing configs keep
+working exactly as before if you leave it off. Checking it shows a
 confirmation dialog first, since a kill switch means **losing internet
 entirely** if the tunnel drops, not just losing the VPN — that's the
 whole point, but it's worth confirming rather than a silent surprise.
 
 When enabled for a tunnel, connecting no longer runs wg-quick against your
 imported `.conf` directly. Instead wg-tray generates a derived copy (never
-modifying the original) with `PostUp`/`PreDown` hooks added, and those hooks
-run a bundled script (`wgtray/resources/leak_protection_macos.sh`) that:
+modifying the original) with `PostUp`/`PreDown` hooks added, calling a
+bundled script — `leak_protection_macos.sh` (pf) or
+`leak_protection_linux.sh` (nftables), picked automatically for the OS —
+that:
 
-1. **Kill switch** — loads a `pf` anchor covering every physical network
-   interface (Wi-Fi, built-in Ethernet, Thunderbolt bridges, USB dongles —
-   enumerated dynamically, not hardcoded to `en0`), blocking everything
-   except DHCP and the WireGuard endpoint's own port, and passing
-   everything on the tunnel's `utun*` interface. If the tunnel drops
-   unexpectedly, your physical interfaces stay blocked instead of
-   silently leaking your real IP.
-2. **DNS blocking** — the same pf anchor blocks outbound DNS (port 53) on
-   every physical interface. This blocks rather than pins to the tunnel's
-   resolver — pinning is fragile if the tunnel drops mid-resolution (a
-   timeout against an unreachable resolver instead of a clean block).
+1. **Kill switch** — blocks every physical network interface (Wi-Fi,
+   Ethernet, USB dongles, Thunderbolt bridges — enumerated dynamically,
+   never hardcoded to one interface name) except DHCP and the WireGuard
+   endpoint's own port, while passing everything on the tunnel's own
+   interface. If the tunnel drops unexpectedly, your physical interfaces
+   stay blocked instead of silently leaking your real IP.
+2. **DNS blocking** — the same firewall rule blocks outbound DNS (port
+   53) on every physical interface, rather than pinning DNS to the
+   tunnel's resolver — pinning is fragile if the tunnel drops
+   mid-resolution (a timeout against an unreachable resolver instead of
+   a clean block). On Linux this also sidesteps needing to detect or
+   configure systemd-resolved vs NetworkManager vs a plain resolv.conf —
+   the firewall rule works the same regardless of init system or DNS
+   manager (Artix's runit/OpenRC/s6/dinit variants included).
 3. **IPv6 guard** — disables IPv6 on every physical interface while
-   connected, since most WireGuard configs only route `0.0.0.0/0` and
-   IPv6 traffic would otherwise bypass the tunnel entirely.
+   connected (via `networksetup` on macOS, `sysctl` on Linux), since
+   most WireGuard configs only route `0.0.0.0/0` and IPv6 traffic would
+   otherwise bypass the tunnel entirely.
 
 Disconnecting (or unchecking the box before reconnecting) restores your
-original IPv6 settings and unloads the pf anchor. The checkbox is disabled
-while that tunnel is connected, since flipping it mid-connection would
-tear it down via a different config than it came up with.
+original IPv6 settings and removes the firewall rule. The checkbox is
+disabled while that tunnel is connected, since flipping it mid-connection
+would tear it down via a different config than it came up with.
 
 **If wg-tray or the tunnel is force-quit while connected** (so `PreDown`
 never runs), the next time you connect *any* protected tunnel, wg-tray
 detects the leftover state and restores IPv6 automatically before
 proceeding. If you don't reconnect anything and just want your original
-IPv6 setting back immediately, run:
-```
-sudo networksetup -setv6automatic "Wi-Fi"    # or your interface's service name
-```
-(`networksetup -listallnetworkservices` lists the exact names.) The pf
-anchor itself doesn't need manual cleanup — `pfctl -a wg-tray-leakguard -F all`
-flushes it, though a reboot or `pfctl -d`/`-e` cycle also clears it.
+IPv6 setting back immediately:
+- **macOS**: `sudo networksetup -setv6automatic "Wi-Fi"` (or your
+  interface's service name — `networksetup -listallnetworkservices`
+  lists them). The pf anchor doesn't need manual cleanup —
+  `pfctl -a wg-tray-leakguard -F all` flushes it, though a reboot or
+  `pfctl -d`/`-e` cycle also clears it.
+- **Linux**: `sudo sysctl net.ipv6.conf.<iface>.disable_ipv6=0` for each
+  physical interface. The nftables table doesn't need manual cleanup —
+  `sudo nft delete table inet wgtray_leakguard` removes it, though a
+  reboot also clears it.
 
-This needs `pfctl`, which is standard on macOS — nothing extra to install.
-Not yet available on Linux (an iptables/nftables equivalent is a natural
-follow-up) or Windows (needs the Windows Filtering Platform, a bigger
-lift, and isn't implemented).
+Needs `pfctl` (macOS, standard) or `nft` (Linux — installed by default on
+most current distros; `pacman -S nftables` on Arch/Artix if missing).
+Not yet available on Windows (needs the Windows Filtering Platform, a
+much bigger lift).
 
 ## Update checking and installing
 

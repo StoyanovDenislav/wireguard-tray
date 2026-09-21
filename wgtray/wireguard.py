@@ -36,14 +36,16 @@ def check_for_conflicting_vpn():
 def _effective_config_path(name):
     """
     The config wg-quick should actually use for this tunnel: the derived
-    leak-protection copy if the user has enabled it for this tunnel (macOS
-    only), otherwise the original as-imported .conf. Regenerated fresh on
-    every connect so edits to the original or a changed DNS/endpoint are
-    always picked up. Must be used consistently for both up and down —
-    wg-quick derives the interface name from the config filename, so
-    bringing it up via one path and down via another leaves it stuck.
+    leak-protection copy if the user has enabled it for this tunnel and
+    it's supported on this platform (macOS or Linux; see
+    leak_protection.is_supported()), otherwise the original as-imported
+    .conf. Regenerated fresh on every connect so edits to the original or
+    a changed endpoint port are always picked up. Must be used
+    consistently for both up and down — wg-quick derives the interface
+    name from the config filename, so bringing it up via one path and
+    down via another leaves it stuck.
     """
-    if IS_MAC and leak_protection_enabled(name):
+    if leak_protection.is_supported() and leak_protection_enabled(name):
         return leak_protection.generate_protected_config(name)
     return config_path(name)
 
@@ -97,7 +99,7 @@ def disconnect(name):
         # Use the *existing* derived config rather than regenerating it,
         # in case leak protection was toggled off while connected — we
         # still need to tear down via the same interface it came up on.
-        if IS_MAC and leak_protection.protected_config_path(name).exists():
+        if leak_protection.is_supported() and leak_protection.protected_config_path(name).exists():
             conf = str(leak_protection.protected_config_path(name))
         else:
             conf = str(config_path(name))

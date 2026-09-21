@@ -9,7 +9,7 @@ DEFAULT_STATE = {
     "active": None,
     "seen_version": None,
     "auto_update_check": False,
-    "leak_protection": {},  # {tunnel_name: bool}, macOS only for now
+    "leak_protection": {},  # {tunnel_name: bool}, macOS/Linux only
 }
 
 

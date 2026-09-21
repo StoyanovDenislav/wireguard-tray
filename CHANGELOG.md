@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.8.0
+
+- **Added**: kill switch + leak protection now works on Linux, not just
+  macOS. Uses nftables (blocks all physical interfaces except DHCP and
+  the WireGuard endpoint's port, blocks outbound DNS, passes the tunnel
+  interface) and sysctl for the IPv6 guard — both are kernel/firewall
+  level, so this works identically regardless of init system
+  (systemd, runit, OpenRC, s6, dinit — including Artix's non-systemd
+  variants) and never touches DNS resolver configuration
+  (systemd-resolved/NetworkManager/resolv.conf), sidestepping the need
+  to detect or support any of them specifically. Same opt-in,
+  off-by-default checkbox and confirmation dialog as macOS.
+  `leak_protection.is_supported()` now checks for `pfctl` (macOS) or
+  `nft` (Linux) rather than assuming macOS.
+
 ## 0.7.0
 
 - **Added**: a config editor for tweaking a tunnel's .conf directly —

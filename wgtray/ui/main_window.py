@@ -7,7 +7,6 @@ from PySide6.QtWidgets import (
 )
 
 from .. import leak_protection
-from ..platform_utils import IS_MAC
 from ..state import leak_protection_enabled, list_configs, set_leak_protection
 from .config_editor_dialog import ConfigEditorDialog
 
@@ -81,18 +80,18 @@ class MainWindow(QMainWindow):
 
         detail_layout.addSpacing(16)
 
-        self.leak_protection_box = QCheckBox("Kill switch + leak protection (macOS)")
+        self.leak_protection_box = QCheckBox("Kill switch + leak protection")
         self.leak_protection_box.setToolTip(
             "While this tunnel is connected, ALL other internet access on\n"
-            "this Mac is blocked if the tunnel drops — that's the point of\n"
-            "a kill switch, but it means losing internet, not just losing\n"
+            "this machine is blocked if the tunnel drops — that's the point\n"
+            "of a kill switch, but it means losing internet, not just losing\n"
             "the VPN, until you reconnect or disconnect from wg-tray.\n\n"
             "Also blocks DNS queries and disables IPv6 on your physical\n"
             "network interfaces while connected. Can't be changed while\n"
             "this tunnel is connected."
         )
         self.leak_protection_box.toggled.connect(self.on_leak_protection_toggled)
-        if not IS_MAC:
+        if not leak_protection.is_supported():
             self.leak_protection_box.setVisible(False)
         leak_row = QHBoxLayout()
         leak_row.addStretch(1)
@@ -211,8 +210,8 @@ class MainWindow(QMainWindow):
             proceed = QMessageBox.question(
                 self,
                 "Enable kill switch?",
-                "This blocks ALL other internet access on this Mac if the "
-                "tunnel drops, not just the VPN — you'll lose internet "
+                "This blocks ALL other internet access on this machine if "
+                "the tunnel drops, not just the VPN — you'll lose internet "
                 "entirely until you reconnect or disconnect this tunnel in "
                 "wg-tray.\n\nIt also blocks DNS queries and disables IPv6 "
                 "on your physical network interfaces while connected.\n\n"

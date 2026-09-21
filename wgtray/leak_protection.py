@@ -1,21 +1,24 @@
-"""Opt-in kill switch + DNS/IPv6 leak guard for macOS.
+"""Opt-in kill switch + DNS/IPv6 leak guard for macOS and Linux.
 
 Implemented as PostUp/PreDown hooks in a *derived* copy of the user's
-.conf (never mutating the original), calling a bundled pf-based shell
-script (see wgtray/resources/leak_protection_macos.sh). wg-quick already
-runs PostUp/PreDown as root — same trust boundary as `wg-quick up` itself,
-nothing new is granted here.
+.conf (never mutating the original), calling a bundled per-OS shell
+script (wgtray/resources/leak_protection_{macos,linux}.sh — macOS uses
+pf, Linux uses nftables). wg-quick already runs PostUp/PreDown as root —
+same trust boundary as `wg-quick up` itself, nothing new is granted here.
 
-DNS handling is a pf block rule (port 53 on the physical interfaces), not
-a pin to the tunnel's resolver — pinning is fragile if the tunnel drops
-mid-resolution (you'd get a timeout against an unreachable resolver
-instead of a clean, immediate block). The pf anchor already blocks
+DNS handling on both platforms is a firewall block rule (port 53 on the
+physical interfaces), not a pin to the tunnel's resolver — pinning is
+fragile if the tunnel drops mid-resolution (you'd get a timeout against
+an unreachable resolver instead of a clean, immediate block), and on
+Linux it would also mean detecting and handling systemd-resolved vs
+NetworkManager vs a plain resolv.conf across every init system
+(Artix's runit/OpenRC/s6/dinit variants included) — the firewall rule
+sidesteps all of that entirely. The kill switch already blocks
 everything else on the physical interfaces; the DNS rule is mostly
 belt-and-suspenders for the brief window while the tunnel is up.
 
-Linux support (iptables/nftables) is a natural follow-up but out of
-scope for now. Windows kill switches need WFP, a much bigger lift, and
-aren't attempted here.
+Windows kill switches need WFP, a much bigger lift, and aren't
+attempted here.
 """
 import hashlib
 import json
@@ -24,10 +27,28 @@ import shutil
 from pathlib import Path
 
 from .paths import CONFIGS_DIR
-from .platform_utils import IS_MAC
+from .platform_utils import IS_LINUX, IS_MAC
 
-SCRIPT_NAME = "leak_protection_macos.sh"
 DEFAULT_ENDPOINT_PORT = "51820"
+
+_SCRIPT_NAMES = {
+    "macos": "leak_protection_macos.sh",
+    "linux": "leak_protection_linux.sh",
+}
+
+
+def _current_platform_key():
+    if IS_MAC:
+        return "macos"
+    if IS_LINUX:
+        return "linux"
+    return None
+
+
+def _script_name():
+    key = _current_platform_key()
+    return _SCRIPT_NAMES[key] if key else None
+
 
 # wg-quick derives the network interface name from the config file's
 # basename and requires it to be <=15 characters (a Linux/BSD interface
@@ -50,11 +71,11 @@ def _bundled_script_path():
     # Next to this file when run from source; PyInstaller's onedir/onefile
     # layout keeps package data alongside the package, so this also holds
     # for the packaged app as long as the .spec collects wgtray/resources.
-    return Path(__file__).parent / "resources" / SCRIPT_NAME
+    return Path(__file__).parent / "resources" / _script_name()
 
 
 def _installed_script_path():
-    return CONFIGS_DIR.parent / SCRIPT_NAME
+    return CONFIGS_DIR.parent / _script_name()
 
 
 def _ensure_script_installed():
@@ -117,8 +138,8 @@ def generate_protected_config(name):
     plus PostUp/PreDown lines that invoke the leak-protection script.
     Returns the derived path.
     """
-    if not IS_MAC:
-        raise RuntimeError("Leak protection is currently macOS-only.")
+    if not is_supported():
+        raise RuntimeError("Leak protection isn't supported on this platform/setup.")
 
     if name in _load_manifest().values():
         # Guards against ever protecting an already-derived config's own
@@ -179,4 +200,8 @@ def remove_protected_config(name):
 
 
 def is_supported():
-    return IS_MAC and shutil.which("pfctl") is not None
+    if IS_MAC:
+        return shutil.which("pfctl") is not None
+    if IS_LINUX:
+        return shutil.which("nft") is not None
+    return False
