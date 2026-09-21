@@ -60,6 +60,18 @@ class MainWindow(QMainWindow):
         settings_row.addWidget(settings_btn)
         sidebar_layout.addLayout(settings_row)
 
+        # A visible Quit button, not just the tray's right-click menu —
+        # right-click is a genuinely awkward gesture on a trackpad (two-
+        # finger tap or a Force Click configuration), so relying on the
+        # context menu as the only way to quit shuts out anyone using
+        # one comfortably.
+        quit_row = QHBoxLayout()
+        quit_row.setContentsMargins(8, 0, 8, 8)
+        quit_btn = QPushButton("Quit")
+        quit_btn.clicked.connect(self.controller.quit)
+        quit_row.addWidget(quit_btn)
+        sidebar_layout.addLayout(quit_row)
+
         root.addWidget(sidebar)
 
         divider = QFrame()

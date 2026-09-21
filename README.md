@@ -117,6 +117,21 @@ stores a password itself — it always hands off to your OS's native prompt:
 - macOS: `osascript` administrator-privileges dialog
 - Windows: native UAC prompt
 
+## Quitting cleanly
+
+Quitting — the tray menu's Quit item, the Quit button in the window,
+Cmd+Q/Alt+F4, or a session logout/SIGTERM — always disconnects the
+active tunnel first, before the process actually exits. Without this,
+quitting the app left the tunnel interface running with nothing left to
+manage it, and if the kill switch was on, its firewall rule stayed
+loaded indefinitely with no way to lift it short of the manual recovery
+steps in the leak-protection section above.
+
+There's also a Quit button directly in the main window's sidebar, not
+just the tray icon's right-click menu — right-click is an awkward
+gesture on a trackpad (two-finger tap, or a Force Click setup), so it
+shouldn't be the only way to quit.
+
 ## Editing a tunnel's config
 
 Sometimes you need to tweak something wg-tray's UI doesn't expose —

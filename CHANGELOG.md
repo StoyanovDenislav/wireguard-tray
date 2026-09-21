@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.10.1
+
+- **Fixed**: quitting the app (Cmd+Q, Alt+F4, the tray menu's Quit,
+  SIGTERM/session logout) left an active tunnel running with nothing
+  left to manage it — and if the kill switch was on, its firewall rule
+  stayed loaded indefinitely with no running app to lift it. Hooked
+  `QApplication.aboutToQuit`, which fires for every quit path (not just
+  a single button), and disconnects the active tunnel synchronously
+  before the process is allowed to actually exit.
+- **Added**: a Quit button in the main window's sidebar, not just the
+  tray icon's right-click menu — right-click is an awkward gesture on a
+  trackpad (two-finger tap, or a Force Click setup), so it shouldn't be
+  the only way to quit.
+
 ## 0.10.0
 
 - **Added**: optional per-tunnel passphrase encryption of the private

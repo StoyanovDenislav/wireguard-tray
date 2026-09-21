@@ -1,5 +1,6 @@
 """The tray icon, its menu, and the glue between the window/dialogs and
 the WireGuard control + update-checking logic."""
+import sys
 from pathlib import Path
 
 from PySide6.QtGui import QAction, QCursor
@@ -97,6 +98,15 @@ class WgTray:
         self.window.toggle_finished.connect(self._on_toggle_finished)
         self.tray.show()
 
+        # Runs for every quit path — the Quit menu item, Cmd+Q/Alt+F4,
+        # SIGTERM, session logout — not just our own button, since
+        # QApplication.quit() and OS-level quit signals both route
+        # through aboutToQuit. Without this, quitting left the tunnel
+        # interface up with nothing left to manage it, and if the kill
+        # switch was on, its firewall rule stayed loaded indefinitely
+        # with no running app to lift it.
+        self.app.aboutToQuit.connect(self._disconnect_before_quit)
+
         # Show the window once on startup.
         self.show_window()
         self.maybe_show_changelog()
@@ -133,6 +143,12 @@ class WgTray:
         dlg = SettingsDialog(self, self.window)
         dlg.exec()
 
+    def quit(self):
+        # Routes through QApplication.quit() -> aboutToQuit ->
+        # _disconnect_before_quit, same as the tray menu's Quit item and
+        # Cmd+Q/Alt+F4/SIGTERM — one cleanup path for every way to exit.
+        self.app.quit()
+
     def maybe_show_changelog(self):
         state = load_state()
         seen = state.get("seen_version")
@@ -161,6 +177,30 @@ class WgTray:
 
     def current_active(self):
         return load_state().get("active")
+
+    def _disconnect_before_quit(self):
+        """
+        Runs synchronously (not on the background toggle thread) because
+        aboutToQuit handlers block quit until they return, and that's
+        exactly what's wanted here — the process shouldn't actually exit
+        until the tunnel (and, if the kill switch was on, its firewall
+        rule and IPv6 settings) is torn down cleanly. If a toggle was
+        already in flight when quit was requested, let it finish first
+        rather than racing a second disconnect against it.
+        """
+        if self._toggle_thread is not None:
+            self._toggle_thread.wait(5000)
+
+        active = self.current_active()
+        if active is None:
+            return
+
+        ok, out = disconnect(active)
+        if not ok:
+            # Best-effort — the process is quitting either way, but at
+            # least surface that cleanup didn't fully succeed rather than
+            # silently leaving the tunnel/firewall state stuck.
+            print(f"wg-tray: failed to disconnect '{active}' on quit: {out}", file=sys.stderr)
 
     def rebuild_menu(self):
         self.menu.clear()
@@ -207,7 +247,7 @@ class WgTray:
 
         self.menu.addSeparator()
         quit_action = QAction("Quit", self.menu)
-        quit_action.triggered.connect(self.app.quit)
+        quit_action.triggered.connect(self.quit)
         self.menu.addAction(quit_action)
 
     def refresh_all(self):
