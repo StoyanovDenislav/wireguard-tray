@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QPixmap
 from PySide6.QtCore import Qt
 
-import wg_tray
+from wgtray.theme import make_icon
 
 SIZES = (16, 32, 48, 64, 128, 256, 512, 1024)
 
@@ -28,7 +28,7 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     app = QApplication([])
-    base = wg_tray.make_icon(True).pixmap(256, 256)
+    base = make_icon(True).pixmap(256, 256)
 
     for size in SIZES:
         scaled = base.scaled(
