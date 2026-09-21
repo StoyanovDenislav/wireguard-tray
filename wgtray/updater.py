@@ -7,6 +7,7 @@ the Releases page in a browser. No hardware IDs, no analytics, no
 custom telemetry server.
 """
 import json
+import ssl
 import urllib.error
 import urllib.request
 
@@ -15,6 +16,23 @@ RELEASES_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_PAGE_URL = f"https://github.com/{GITHUB_REPO}/releases"
 
 _HEADERS = {"Accept": "application/vnd.github+json", "User-Agent": "wg-tray"}
+
+
+def _ssl_context():
+    """
+    A PyInstaller-frozen app doesn't ship the OS's CA trust store the way
+    a normal Python install does, so the interpreter's default SSL
+    context can fail to verify api.github.com's certificate — this is
+    what "Couldn't reach GitHub" actually meant in packaged builds,
+    masked by the broad except below. certifi bundles a CA file we can
+    point the context at explicitly, which works the same whether
+    running from source or frozen.
+    """
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
 
 
 def _parse_version(v):
@@ -40,14 +58,14 @@ def fetch_latest_release():
     """
     try:
         req = urllib.request.Request(RELEASES_API_URL, headers=_HEADERS)
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=5, context=_ssl_context()) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return {
             "version": data.get("tag_name", "").lstrip("v"),
             "notes": data.get("body", "").strip(),
             "url": data.get("html_url", RELEASES_PAGE_URL),
         }
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError):
+    except (urllib.error.URLError, ssl.SSLError, TimeoutError, json.JSONDecodeError, KeyError):
         return None
 
 
@@ -57,8 +75,8 @@ def fetch_release_notes_for(version):
     try:
         url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/tags/v{version}"
         req = urllib.request.Request(url, headers=_HEADERS)
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=5, context=_ssl_context()) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return data.get("body", "").strip()
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError):
+    except (urllib.error.URLError, ssl.SSLError, TimeoutError, json.JSONDecodeError, KeyError):
         return None

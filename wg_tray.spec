@@ -2,14 +2,23 @@
 # Build with: pyinstaller wg_tray.spec
 import sys
 
+from PyInstaller.utils.hooks import collect_data_files
+
 block_cipher = None
+
+# certifi's CA bundle is a data file, not code — PyInstaller's default
+# import analysis won't pick it up on its own, and without it the
+# updater's HTTPS requests fail certificate verification in frozen
+# builds (see wgtray/updater.py's _ssl_context).
+datas = [("wgtray/resources", "wgtray/resources")]
+datas += collect_data_files("certifi")
 
 a = Analysis(
     ["wg_tray.py"],
     pathex=[],
     binaries=[],
-    datas=[("wgtray/resources", "wgtray/resources")],
-    hiddenimports=["pyzbar.pyzbar"],
+    datas=datas,
+    hiddenimports=["pyzbar.pyzbar", "certifi"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

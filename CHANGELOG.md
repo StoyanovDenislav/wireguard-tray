@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.2
+
+- **Fixed**: "Couldn't reach GitHub to check for updates" in packaged
+  builds (AppImage/dmg/installer). PyInstaller-frozen apps don't ship
+  the OS's CA trust store the normal way, so HTTPS certificate
+  verification against `api.github.com` was silently failing and
+  getting swallowed by the update checker's broad error handling.
+  Now uses `certifi`'s bundled CA file explicitly for the update
+  checker's requests, and PyInstaller is told to bundle it.
+
 ## 0.4.1
 
 - **Changed**: leak-protection DNS handling now blocks port 53 on
