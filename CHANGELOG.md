@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.1
+
+- **Fixed**: the v0.5.0 GitHub Release shipped with no platform binaries
+  attached — only the auto-generated source zip/tar.gz. The release
+  job's `actions/checkout` step ran *after* the built artifacts were
+  downloaded and flattened into `release/`, and `checkout` cleans
+  untracked files from the workspace before checking out, wiping that
+  directory right before it was used to attach files to the release.
+  Reordered so checkout runs first.
+
 ## 0.5.0
 
 - **Added**: actual in-app update installation, not just a link to the

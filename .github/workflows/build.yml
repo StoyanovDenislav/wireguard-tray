@@ -177,6 +177,15 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Must run before downloading/flattening build artifacts below —
+      # actions/checkout cleans the workspace (removes untracked files)
+      # before checking out, which would otherwise wipe the release/
+      # directory built in this job's later steps.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -186,11 +195,6 @@ jobs:
           mkdir release
           find artifacts -type f \( -name "*.zip" -o -name "*.tar.gz" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.exe" \) -exec cp {} release/ \;
           ls -la release
-
-      - uses: actions/checkout@v4
-        with:
-          sparse-checkout: CHANGELOG.md
-          sparse-checkout-cone-mode: false
 
       - name: Extract this version's changelog section
         id: changelog
