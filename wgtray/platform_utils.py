@@ -6,6 +6,7 @@ UAC), so this module is the only place that runs anything as admin.
 """
 import os
 import platform
+import re
 import shutil
 import subprocess
 
@@ -45,6 +46,121 @@ def find_bash():
         if os.path.exists(candidate):
             return candidate
     return "/bin/bash"
+
+
+# Known VPN clients that run a background daemon capable of holding the
+# default route even after their GUI window is closed — quitting the app
+# window alone doesn't stop these. Used to give the user an actionable
+# name ("Mullvad VPN is still connected") instead of a generic warning.
+_KNOWN_VPN_DAEMONS = {
+    "mullvad-daemon": "Mullvad VPN",
+    "tailscaled": "Tailscale",
+    "nordvpnd": "NordVPN",
+    "ovpnagent": "OpenVPN Connect",
+    "expressvpnd": "ExpressVPN",
+    "protonvpn-app": "Proton VPN",
+}
+
+
+def find_running_vpn_daemons():
+    """
+    Returns a list of (process_name, friendly_name) for any known VPN
+    daemon currently running, regardless of whether it's actually holding
+    a route right now — used to name a likely culprit in the conflict
+    warning, and to know what a "disconnect it for me" action would need
+    to stop. Best-effort: an unrecognized VPN client won't show up here
+    even if it's the one actually causing find_conflicting_vpn_interface()
+    to trip.
+    """
+    if IS_WINDOWS:
+        return []
+    try:
+        result = subprocess.run(["ps", "-Ao", "comm="], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+
+    found = []
+    for line in result.stdout.splitlines():
+        proc_name = line.strip().rsplit("/", 1)[-1]
+        if proc_name in _KNOWN_VPN_DAEMONS:
+            found.append((proc_name, _KNOWN_VPN_DAEMONS[proc_name]))
+    return found
+
+
+# Known VPN clients with a safe, official CLI disconnect command we can
+# offer to run on the user's behalf. Anything not listed here just gets
+# named in the warning — we don't guess at unfamiliar VPN CLIs.
+_SAFE_DISCONNECT_COMMANDS = {
+    "mullvad-daemon": ["mullvad", "disconnect", "--wait"],
+    "tailscaled": ["tailscale", "down"],
+}
+
+
+def disconnect_other_vpn(daemon_process_name):
+    """
+    Run the known-safe official disconnect command for a detected VPN
+    daemon (see _SAFE_DISCONNECT_COMMANDS). Returns (ok, output). Only
+    ever called after the user explicitly clicks a "Disconnect X" button
+    naming exactly what will run — never automatic.
+    """
+    argv = _SAFE_DISCONNECT_COMMANDS.get(daemon_process_name)
+    if not argv or not shutil.which(argv[0]):
+        return False, f"No known safe way to disconnect this automatically."
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=15)
+        ok = result.returncode == 0
+        return ok, (result.stdout + result.stderr).strip()
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+
+
+def find_conflicting_vpn_interface():
+    """
+    wg-quick (macOS/Linux) picks the *first* "default" line out of the
+    routing table as the gateway to route the WireGuard endpoint itself
+    through (see its collect_gateways()). If another VPN/tunnel is
+    already up and its utun*/tun*/ppp* interface appears there before
+    the real physical gateway, wg-quick tries to use that interface name
+    as if it were a gateway IP address and fails with "bad address: X" —
+    a wg-quick limitation, not something we can fix, but worth detecting
+    up front so the user gets a clear message instead of a raw script
+    dump. Returns the offending interface name, or None if the first
+    default route looks like a normal IP gateway.
+    """
+    if not (IS_MAC or IS_LINUX):
+        return None
+    try:
+        if IS_MAC:
+            result = subprocess.run(
+                ["netstat", "-nr", "-f", "inet"], capture_output=True, text=True, timeout=5
+            )
+        else:
+            result = subprocess.run(
+                ["ip", "route", "show", "default"], capture_output=True, text=True, timeout=5
+            )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+    if IS_MAC:
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0] == "default":
+                gateway = parts[1]
+                # A real gateway is an IP; a tunnel interface name isn't.
+                if not re.match(r"^[0-9a-fA-F:.]+$", gateway):
+                    return gateway
+                return None
+    else:
+        # `ip route show default` lines look like:
+        # "default via 192.168.1.1 dev en0 ..." or, with no real gateway,
+        # "default dev utun3 scope link ..."
+        for line in result.stdout.splitlines():
+            m = re.search(r"\bdev\s+(\S+)", line)
+            if m and "via" not in line:
+                dev = m.group(1)
+                if re.match(r"^(utun|tun|wg|tailscale|ppp)\d*$", dev):
+                    return dev
+    return None
 
 
 def run_privileged(argv):

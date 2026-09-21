@@ -1,5 +1,5 @@
-"""Settings dialog (update-check preferences) and the one-time changelog
-screen shown after an update."""
+"""Settings dialog (update-check preferences), the one-time changelog
+screen shown after an update, and the "another VPN is in the way" warning."""
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import APP_VERSION
+from ..platform_utils import disconnect_other_vpn
 from ..self_update import UpdateError, install_and_relaunch, is_frozen
 from ..state import load_state, save_state
 from ..updater import asset_for_platform, fetch_latest_release, is_newer_version
@@ -188,3 +189,92 @@ class ChangelogDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.Ok)
         buttons.accepted.connect(self.accept)
         layout.addWidget(buttons)
+
+
+class VpnConflictDialog(QDialog):
+    """
+    Shown before connecting if another VPN/tunnel already holds the
+    default route. wg-tray only manages a single tunnel and doesn't
+    coordinate with other VPN clients — wg-quick's own route setup fails
+    in confusing ways in that situation (see
+    wireguard.check_for_conflicting_vpn's docstring), so this warns
+    clearly up front instead of surfacing a raw wg-quick script dump
+    after a failed connect attempt.
+
+    Returns (via exec()'s result) whether the user chose to proceed
+    anyway; self.disconnected is set True if a "Disconnect X" button was
+    used and succeeded, so the caller can retry the conflict check after.
+    """
+
+    def __init__(self, conflict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Another VPN is active")
+        self.setMinimumWidth(440)
+        self.disconnected = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(14)
+
+        title = QLabel("Another VPN is active")
+        title_font = QFont()
+        title_font.setBold(True)
+        title_font.setPointSize(14)
+        title.setFont(title_font)
+        layout.addWidget(title)
+
+        daemons = conflict["daemons"]
+        if daemons:
+            names = " and/or ".join(friendly for _, friendly in daemons)
+            detail = (
+                f"Something is holding this Mac's default route through "
+                f"{conflict['interface']}, which looks like another VPN or "
+                f"tunnel. {names} {'is' if len(daemons) == 1 else 'are'} "
+                f"running and may be the cause. "
+            )
+        else:
+            detail = (
+                f"Something is holding this Mac's default route through "
+                f"{conflict['interface']}, which looks like another VPN "
+                f"or tunnel. "
+            )
+        detail += (
+            "wg-tray manages a single WireGuard tunnel and doesn't coordinate "
+            "with other VPN clients — connecting now will likely fail or "
+            "produce a broken network route. Disconnect the other VPN first."
+        )
+        detail_label = QLabel(detail)
+        detail_label.setWordWrap(True)
+        layout.addWidget(detail_label)
+
+        self.result_label = QLabel("")
+        self.result_label.setWordWrap(True)
+        layout.addWidget(self.result_label)
+
+        for proc_name, friendly in daemons:
+            btn = QPushButton(f"Disconnect {friendly}")
+            btn.clicked.connect(lambda checked=False, p=proc_name, f=friendly: self._disconnect(p, f, btn))
+            layout.addWidget(btn)
+
+        layout.addStretch(1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Cancel)
+        buttons.rejected.connect(self.reject)
+        proceed_btn = QPushButton("Connect anyway")
+        buttons.addButton(proceed_btn, QDialogButtonBox.AcceptRole)
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
+
+    def _disconnect(self, proc_name, friendly, button):
+        button.setEnabled(False)
+        self.result_label.setText(f"Disconnecting {friendly}…")
+        QApplication.processEvents()
+
+        ok, out = disconnect_other_vpn(proc_name)
+        if ok:
+            self.disconnected = True
+            self.result_label.setText(f"{friendly} disconnected.")
+            self.accept()
+        else:
+            button.setEnabled(True)
+            self.result_label.setText(f"Couldn't disconnect {friendly}: {out}")

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.0
+
+- **Added**: detection of another VPN/tunnel already holding the default
+  route before connecting (Linux/macOS). wg-quick picks the first
+  "default" line from the routing table as the gateway for the
+  WireGuard endpoint's own route — if another VPN's tunnel interface is
+  in that slot instead of a real gateway IP, it fails with a cryptic
+  `route: bad address: utunN`. wg-tray now checks for this up front and
+  shows a dialog naming the likely cause (recognizing Mullvad,
+  Tailscale, NordVPN, OpenVPN Connect, ExpressVPN, and Proton VPN
+  daemons by process name), with a "Disconnect X" button for VPNs that
+  have a well-known, official CLI disconnect command (Mullvad,
+  Tailscale) — anything else is just named, not guessed at. "Connect
+  anyway" is always available too.
+
 ## 0.5.2
 
 - **Fixed**: enabling the kill switch failed with `wg-quick: The config

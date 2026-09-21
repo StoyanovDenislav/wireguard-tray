@@ -52,8 +52,8 @@ than the latest tagged release.
 `wg_tray.py` is just the entry point; the implementation lives in the
 `wgtray/` package:
 
-- `platform_utils.py` — OS detection + privilege-escalated command exec
-  (pkexec/osascript/UAC).
+- `platform_utils.py` — OS detection, privilege-escalated command exec
+  (pkexec/osascript/UAC), and other-VPN conflict detection.
 - `paths.py` / `state.py` — on-disk config dir + persisted state (active
   tunnel, update-check preferences).
 - `wireguard.py` — connect/disconnect and config import (.conf, QR image).
@@ -112,6 +112,29 @@ stores a password itself — it always hands off to your OS's native prompt:
 - Linux: `pkexec` (polkit's graphical sudo prompt)
 - macOS: `osascript` administrator-privileges dialog
 - Windows: native UAC prompt
+
+## Other VPN conflict detection (Linux/macOS)
+
+wg-tray manages a single WireGuard tunnel and doesn't coordinate with
+other VPN clients. If another VPN (Tailscale, Mullvad, a corporate VPN,
+another WireGuard tunnel, etc.) already holds your Mac/Linux box's
+default route when you try to connect, `wg-quick`'s own route setup
+breaks in confusing ways — it picks the *first* "default" line out of
+the routing table as the gateway to route the WireGuard endpoint through,
+and if that's another VPN's tunnel interface instead of your real
+gateway, it fails with something like:
+```
+route: bad address: utun4
+```
+
+Before attempting to connect, wg-tray checks for this and, if detected,
+shows a dialog naming the likely cause instead of letting that cryptic
+failure surface. For a short list of VPN clients with a well-known,
+official CLI disconnect command (currently Mullvad, Tailscale), it also
+offers a "Disconnect X" button that runs exactly that command — nothing
+guessed or improvised for VPNs it doesn't specifically recognize; those
+just get named so you can quit them yourself. You can also choose
+"Connect anyway" if you know what you're doing.
 
 ## Kill switch + leak protection (macOS only, opt-in)
 

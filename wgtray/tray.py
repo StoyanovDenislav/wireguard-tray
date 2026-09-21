@@ -11,10 +11,13 @@ from PySide6.QtCore import QTimer
 from . import APP_VERSION
 from .state import list_configs, load_state, save_state
 from .theme import make_icon
-from .ui.dialogs import ChangelogDialog, SettingsDialog
+from .ui.dialogs import ChangelogDialog, SettingsDialog, VpnConflictDialog
 from .ui.main_window import MainWindow
 from .updater import fetch_latest_release, fetch_release_notes_for, is_newer_version
-from .wireguard import HAVE_QR, connect, disconnect, import_conf_file, import_from_qr_image
+from .wireguard import (
+    HAVE_QR, check_for_conflicting_vpn, connect, disconnect, import_conf_file,
+    import_from_qr_image,
+)
 
 POLL_INTERVAL_MS = 5_000
 AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000  # 6 hours
@@ -151,10 +154,36 @@ class WgTray:
                 if not ok:
                     self.error(f"Failed to disconnect '{active}' first:\n{out}")
                     return
+
+            if not self._resolve_vpn_conflict():
+                return
+
             ok, out = connect(name)
             if not ok:
                 self.error(f"Failed to connect:\n{out}")
         self.refresh_all()
+
+    def _resolve_vpn_conflict(self):
+        """
+        Checks for another VPN holding the default route before
+        connecting, and if found, shows VpnConflictDialog. Returns True
+        if it's fine to proceed with connecting (no conflict, or the
+        user chose "Connect anyway" / successfully disconnected the
+        other VPN), False if the user cancelled.
+        """
+        conflict = check_for_conflicting_vpn()
+        if conflict is None:
+            return True
+
+        dlg = VpnConflictDialog(conflict, self.window)
+        proceed = dlg.exec()
+        if not proceed:
+            return False
+        if dlg.disconnected:
+            # Re-check — disconnecting one daemon doesn't guarantee the
+            # route is clear yet (or that it was even the actual culprit).
+            return check_for_conflicting_vpn() is None
+        return True
 
     def do_import_file(self):
         path, _ = QFileDialog.getOpenFileName(

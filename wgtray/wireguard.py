@@ -5,9 +5,32 @@ from pathlib import Path
 from . import leak_protection
 from .paths import CONFIGS_DIR
 from .platform_utils import (
-    IS_MAC, IS_WINDOWS, find_bash, find_wg_quick, find_wireguard_exe, run_privileged,
+    IS_MAC, IS_WINDOWS, disconnect_other_vpn, find_bash, find_conflicting_vpn_interface,
+    find_running_vpn_daemons, find_wg_quick, find_wireguard_exe, run_privileged,
 )
 from .state import config_path, leak_protection_enabled, load_state, save_state
+
+
+def check_for_conflicting_vpn():
+    """
+    wg-tray (via wg-quick) only manages a single tunnel and doesn't
+    coordinate with other VPN clients. If another VPN already holds the
+    default route, wg-quick's own route setup breaks in confusing ways
+    (see find_conflicting_vpn_interface's docstring) — this lets the
+    caller warn about that *before* attempting to connect, instead of
+    surfacing wg-quick's raw script failure after the fact.
+
+    Returns None if no conflict is detected, otherwise a dict:
+    {'interface': the conflicting utun/tun device name,
+     'daemons': [(process_name, friendly_name), ...] of any recognized
+                VPN daemons currently running (possibly unrelated to the
+                actual conflict — just what's available to offer
+                disconnecting, named so the user can judge for themselves)}
+    """
+    interface = find_conflicting_vpn_interface()
+    if interface is None:
+        return None
+    return {"interface": interface, "daemons": find_running_vpn_daemons()}
 
 
 def _effective_config_path(name):
