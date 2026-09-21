@@ -26,6 +26,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Compute version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -34,7 +44,8 @@ jobs:
         if: matrix.name == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libzbar0 libegl1 libxkbcommon0 libgl1
+          sudo apt-get install -y libzbar0 libegl1 libxkbcommon0 libgl1 \
+            fuse libfuse2
 
       - name: Install system dependencies (macOS)
         if: matrix.name == 'macos'
@@ -45,26 +56,106 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Export icon assets
+        run: python3 scripts/export_icon.py dist-icons
+
       - name: Build with PyInstaller
         run: pyinstaller --noconfirm wg_tray.spec
 
-      - name: Package macOS app
+      # ---------------- macOS: .app zip + .dmg ----------------
+
+      - name: Package macOS app (zip)
         if: matrix.name == 'macos'
         run: |
           cd dist
           ditto -c -k --sequesterRsrc --keepParent wg-tray.app wg-tray-macos.zip
 
-      - name: Package Linux build
+      - name: Build macOS .dmg
+        if: matrix.name == 'macos'
+        run: |
+          brew install create-dmg
+          create-dmg \
+            --volname "wg-tray" \
+            --window-size 500 300 \
+            --icon-size 96 \
+            --icon "wg-tray.app" 125 120 \
+            --app-drop-link 375 120 \
+            "dist/wg-tray-macos.dmg" \
+            "dist/wg-tray.app" || true
+
+      # ---------------- Linux: tar.gz + AppImage ----------------
+
+      - name: Package Linux build (tar.gz)
         if: matrix.name == 'linux'
         run: |
           cd dist
           tar -czf wg-tray-linux.tar.gz wg-tray
 
-      - name: Package Windows build
+      - name: Build Linux AppImage
+        if: matrix.name == 'linux'
+        run: |
+          set -euo pipefail
+          curl -L -o appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+
+          APPDIR=AppDir
+          rm -rf "$APPDIR"
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/icons/hicolor/256x256/apps"
+
+          cp -r dist/wg-tray/* "$APPDIR/usr/bin/"
+          cp dist-icons/icon_256.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/wg-tray.png"
+          cp dist-icons/icon_256.png "$APPDIR/wg-tray.png"
+
+          cat > "$APPDIR/wg-tray.desktop" <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=wg-tray
+          Comment=Tiny no-telemetry WireGuard tray client
+          Exec=wg-tray
+          Icon=wg-tray
+          Categories=Network;Security;
+          Terminal=false
+          EOF
+
+          cat > "$APPDIR/AppRun" <<'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          exec "$HERE/usr/bin/wg-tray" "$@"
+          EOF
+          chmod +x "$APPDIR/AppRun"
+
+          ARCH=x86_64 ./appimagetool "$APPDIR" "dist/wg-tray-x86_64.AppImage"
+
+      # ---------------- Windows: zip + Inno Setup installer ----------------
+
+      - name: Package Windows build (zip)
         if: matrix.name == 'windows'
         run: |
           cd dist
           Compress-Archive -Path wg-tray -DestinationPath wg-tray-windows.zip
+
+      - name: Convert icon to .ico
+        if: matrix.name == 'windows'
+        run: |
+          python -m pip install pillow
+          python -c "
+          from PIL import Image
+          img = Image.open('dist-icons/icon.png')
+          img.save('dist/icon.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])
+          "
+
+      - name: Build Windows installer (Inno Setup)
+        if: matrix.name == 'windows'
+        env:
+          WGTRAY_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          choco install innosetup -y --no-progress
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+          Copy-Item dist-installer\wg-tray-windows-setup.exe dist\wg-tray-windows-setup.exe
+        shell: pwsh
+
+      # ---------------- Upload ----------------
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -72,8 +163,11 @@ jobs:
           name: wg-tray-${{ matrix.name }}
           path: |
             dist/wg-tray-macos.zip
+            dist/wg-tray-macos.dmg
             dist/wg-tray-linux.tar.gz
+            dist/wg-tray-x86_64.AppImage
             dist/wg-tray-windows.zip
+            dist/wg-tray-windows-setup.exe
           if-no-files-found: ignore
 
   release:
@@ -90,7 +184,7 @@ jobs:
       - name: Flatten artifacts
         run: |
           mkdir release
-          find artifacts -type f \( -name "*.zip" -o -name "*.tar.gz" \) -exec cp {} release/ \;
+          find artifacts -type f \( -name "*.zip" -o -name "*.tar.gz" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.exe" \) -exec cp {} release/ \;
           ls -la release
 
       - name: Create GitHub Release

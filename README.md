@@ -14,10 +14,21 @@ Works on Linux, macOS, and Windows.
 
 Grab the latest build for your OS from the [Releases page](../../releases):
 
-- **macOS** — `wg-tray-macos.zip` → unzip → drag `wg-tray.app` to Applications.
-  First launch: right-click → Open (it's unsigned, so Gatekeeper will warn once).
-- **Linux** — `wg-tray-linux.tar.gz` → extract → run `./wg-tray/wg-tray`.
-- **Windows** — `wg-tray-windows.zip` → extract → run `wg-tray.exe`.
+- **macOS**
+  - `wg-tray-macos.dmg` (recommended) — open, drag `wg-tray.app` to Applications.
+  - `wg-tray-macos.zip` — unzip → drag `wg-tray.app` to Applications.
+  - Either way, first launch: right-click → Open (it's unsigned, so Gatekeeper
+    will warn once).
+- **Linux**
+  - `wg-tray-x86_64.AppImage` (recommended) — `chmod +x` it, then run it
+    directly. No install, no distro-specific package, works across most
+    modern distros.
+  - `wg-tray-linux.tar.gz` — extract → run `./wg-tray/wg-tray`, if you'd
+    rather have a plain folder.
+- **Windows**
+  - `wg-tray-windows-setup.exe` (recommended) — a normal installer, adds
+    Start Menu/desktop shortcuts.
+  - `wg-tray-windows.zip` — extract → run `wg-tray.exe`, no install.
 
 Every push to `main` also builds fresh binaries for all three platforms,
 downloadable from the [Actions tab](../../actions) if you want a build newer

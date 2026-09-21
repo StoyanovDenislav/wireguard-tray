@@ -3,5 +3,9 @@ __pycache__/
 .build-venv/
 build/
 dist/
+dist-icons/
+dist-installer/
+AppDir/
+appimagetool
 *.egg-info/
 .DS_Store
