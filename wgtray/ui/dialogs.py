@@ -4,12 +4,13 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel,
-    QPushButton, QTextBrowser, QVBoxLayout,
+    QMessageBox, QProgressBar, QPushButton, QTextBrowser, QVBoxLayout,
 )
 
 from .. import APP_VERSION
+from ..self_update import UpdateError, install_and_relaunch, is_frozen
 from ..state import load_state, save_state
-from ..updater import fetch_latest_release, is_newer_version
+from ..updater import asset_for_platform, fetch_latest_release, is_newer_version
 
 
 class SettingsDialog(QDialog):
@@ -57,6 +58,12 @@ class SettingsDialog(QDialog):
         self.result_label.setWordWrap(True)
         layout.addWidget(self.result_label)
 
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+
+        self._install_btn = None  # created on demand once an update is found
+
         layout.addStretch(1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
@@ -69,7 +76,14 @@ class SettingsDialog(QDialog):
         state["auto_update_check"] = checked
         save_state(state)
 
+    def _clear_install_button(self):
+        if self._install_btn is not None:
+            self._install_btn.setParent(None)
+            self._install_btn.deleteLater()
+            self._install_btn = None
+
     def on_check_clicked(self):
+        self._clear_install_button()
         self.check_btn.setEnabled(False)
         self.result_label.setText("Checking…")
         QApplication.processEvents()
@@ -83,15 +97,70 @@ class SettingsDialog(QDialog):
             )
             return
 
-        if is_newer_version(release["version"], APP_VERSION):
-            self.result_label.setText(
-                f"A newer version is available: v{release['version']}"
-            )
-            open_btn = QPushButton(f"Download v{release['version']}…")
-            open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(release["url"])))
-            self.layout().insertWidget(self.layout().count() - 1, open_btn)
-        else:
+        if not is_newer_version(release["version"], APP_VERSION):
             self.result_label.setText("You're up to date.")
+            return
+
+        if not is_frozen():
+            self.result_label.setText(
+                f"A newer version is available: v{release['version']}\n"
+                "(running from source — pull the latest and restart to update)"
+            )
+            return
+
+        asset = asset_for_platform(release["assets"])
+        if asset is None:
+            self.result_label.setText(
+                f"A newer version is available: v{release['version']}, but no "
+                "matching download was found for your platform."
+            )
+            self._install_btn = QPushButton("Open Releases page…")
+            self._install_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(release["url"])))
+            self.layout().insertWidget(self.layout().count() - 2, self._install_btn)
+            return
+
+        self.result_label.setText(f"A newer version is available: v{release['version']}")
+        self._install_btn = QPushButton(f"Install v{release['version']}…")
+        self._install_btn.clicked.connect(lambda: self.on_install_clicked(asset))
+        self.layout().insertWidget(self.layout().count() - 2, self._install_btn)
+
+    def on_install_clicked(self, asset):
+        proceed = QMessageBox.question(
+            self,
+            "Install update?",
+            f"Download and install {asset['name']}?\n\n"
+            "wg-tray will quit and restart automatically once the update "
+            "is installed.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if proceed != QMessageBox.Yes:
+            return
+
+        self.check_btn.setEnabled(False)
+        self._install_btn.setEnabled(False)
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 0)  # indeterminate until we know total size
+
+        def on_progress(done, total):
+            if total:
+                self.progress_bar.setRange(0, total)
+                self.progress_bar.setValue(done)
+            QApplication.processEvents()
+
+        self.result_label.setText("Downloading update…")
+        QApplication.processEvents()
+
+        try:
+            install_and_relaunch(asset, on_progress=on_progress)
+            # install_and_relaunch calls os._exit(0) on success — nothing
+            # after this line runs on the happy path. If we get here, an
+            # exception was already raised and caught below instead.
+        except UpdateError as e:
+            self.progress_bar.setVisible(False)
+            self.check_btn.setEnabled(True)
+            self._install_btn.setEnabled(True)
+            self.result_label.setText(f"Update failed: {e}")
 
 
 class ChangelogDialog(QDialog):

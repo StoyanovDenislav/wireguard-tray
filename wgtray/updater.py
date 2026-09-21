@@ -51,10 +51,12 @@ def is_newer_version(candidate, current):
 def fetch_latest_release():
     """
     Returns a dict with 'version', 'notes' (the release body — CI
-    auto-fills this from commits via generate_release_notes), and
-    'url', or None on any failure. Failures (offline, rate-limited,
-    etc.) are silent — this is a nice-to-have, never something that
-    should interrupt the user.
+    auto-fills this from commits via generate_release_notes), 'url', and
+    'assets' (list of {'name', 'download_url', 'size'} for every file
+    attached to the release, used to find the right platform's binary
+    for in-app updating), or None on any failure. Failures (offline,
+    rate-limited, etc.) are silent — this is a nice-to-have, never
+    something that should interrupt the user.
     """
     try:
         req = urllib.request.Request(RELEASES_API_URL, headers=_HEADERS)
@@ -64,9 +66,44 @@ def fetch_latest_release():
             "version": data.get("tag_name", "").lstrip("v"),
             "notes": data.get("body", "").strip(),
             "url": data.get("html_url", RELEASES_PAGE_URL),
+            "assets": [
+                {
+                    "name": a.get("name", ""),
+                    "download_url": a.get("browser_download_url", ""),
+                    "size": a.get("size", 0),
+                }
+                for a in data.get("assets", [])
+            ],
         }
     except (urllib.error.URLError, ssl.SSLError, TimeoutError, json.JSONDecodeError, KeyError):
         return None
+
+
+def asset_for_platform(assets):
+    """
+    Pick the right release asset for the OS running right now, preferring
+    the format self_update.py knows how to install unattended:
+    Windows -> the Inno Setup installer .exe (silent-installable);
+    macOS -> the .dmg (self_update.py mounts it and swaps the .app);
+    Linux -> the AppImage (a single file we can replace in place).
+    Returns None if nothing matches (e.g. running from source, or a
+    release that's missing an asset for this platform).
+    """
+    from .platform_utils import IS_LINUX, IS_MAC, IS_WINDOWS
+
+    if IS_WINDOWS:
+        wanted = "windows-setup.exe"
+    elif IS_MAC:
+        wanted = "macos.dmg"
+    elif IS_LINUX:
+        wanted = "x86_64.appimage"
+    else:
+        return None
+
+    for asset in assets:
+        if asset["name"].lower().endswith(wanted):
+            return asset
+    return None
 
 
 def fetch_release_notes_for(version):

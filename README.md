@@ -59,7 +59,9 @@ than the latest tagged release.
 - `wireguard.py` — connect/disconnect and config import (.conf, QR image).
 - `leak_protection.py` + `resources/leak_protection_macos.sh` — the
   opt-in macOS kill switch/DNS/IPv6 guard (see below).
-- `updater.py` — GitHub releases API check (see "Update checking" below).
+- `updater.py` — GitHub releases API check; `self_update.py` — downloads
+  and installs an update in place per OS (see "Update checking and
+  installing" below).
 - `theme.py` — the dark QSS stylesheet and the code-drawn tunnel icon.
 - `ui/main_window.py`, `ui/dialogs.py` — the sidebar window, Settings, and
   changelog dialogs.
@@ -162,21 +164,40 @@ Not yet available on Linux (an iptables/nftables equivalent is a natural
 follow-up) or Windows (needs the Windows Filtering Platform, a bigger
 lift, and isn't implemented).
 
-## Update checking
+## Update checking and installing
 
 wg-tray never phones home on its own. There's no background process, no
-bundled analytics SDK, and no update check runs unless you trigger it:
+bundled analytics SDK, and no network request runs unless you trigger it
+or explicitly opt in:
 
 - **Settings → Check for updates now**: a single, one-off, unauthenticated
   GET to GitHub's public releases API (`api.github.com`) — the same request
   your browser makes if you open the Releases page yourself. No account,
   hardware ID, or usage data is attached.
 - **Settings → Automatically check for updates**: an opt-in toggle,
-  **off by default**. When enabled, it repeats that same request every few
+  **off by default**. When enabled, it repeats that same check every few
   hours and shows a tray notification if a newer version exists. Turning it
   on doesn't change what's sent — same anonymous request, just on a timer.
-  It never auto-downloads or auto-installs anything; you still choose when
-  and whether to grab the new build.
+
+Finding an update doesn't install anything by itself — that's a separate,
+explicit step:
+
+- **Settings → Install vX.Y.Z…**: downloads the right build for your OS
+  and installs it in place, then quits and relaunches wg-tray on the new
+  version. Shows a confirmation dialog first. Mechanics differ per OS
+  since there's no universal "replace this app" primitive:
+  - **Windows**: runs the downloaded Inno Setup installer silently, then quits.
+  - **macOS**: mounts the downloaded `.dmg`, swaps the new `.app` in at the
+    current install path, unmounts, relaunches.
+  - **Linux**: replaces the running AppImage file in place with the
+    downloaded one, then relaunches it.
+  - Only available in packaged builds — running from source shows the
+    new version number and tells you to `git pull` instead.
+
+Auto-installing (downloading and running something unattended, no matter
+how it got triggered) never happens — even with automatic checking
+enabled, actually installing always needs you to click "Install" and
+confirm the dialog.
 
 After you install an update, wg-tray shows a one-time "What's new" screen
 pulled from that version's GitHub Release notes.

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0
+
+- **Added**: actual in-app update installation, not just a link to the
+  Releases page. Settings now shows "Install vX.Y.Z…" when an update is
+  found — it downloads the right build for your OS, installs it in
+  place, and relaunches wg-tray on the new version. Windows runs the
+  installer silently; macOS mounts the `.dmg` and swaps the `.app` in;
+  Linux replaces the running AppImage file. Confirmed with a dialog
+  first, and only ever runs when you click it — even with automatic
+  update *checking* enabled, installing is always a separate, explicit
+  step. Only available in packaged builds (running from source shows
+  the version and tells you to `git pull`).
+
 ## 0.4.3
 
 - **Fixed**: leak protection's derived `<name>.protected.conf` files live
