@@ -6,6 +6,10 @@ tray like Mullvad/OpenVPN's app, but is just a thin GUI wrapper around the
 real WireGuard tooling you already trust — no accounts, no phone-home, no
 bundled analytics.
 
+Built partly out of spite for the official WireGuard macOS app being locked
+behind the App Store with its own signing hoops — this is just the simple,
+open-source client it should've been in the first place.
+
 Works on Linux, macOS, and Windows.
 
 ## Install
@@ -33,6 +37,23 @@ Grab the latest build for your OS from the [Releases page](../../releases):
 Every push to `main` also builds fresh binaries for all three platforms,
 downloadable from the [Actions tab](../../actions) if you want a build newer
 than the latest tagged release.
+
+## Code layout
+
+`wg_tray.py` is just the entry point; the implementation lives in the
+`wgtray/` package:
+
+- `platform_utils.py` — OS detection + privilege-escalated command exec
+  (pkexec/osascript/UAC).
+- `paths.py` / `state.py` — on-disk config dir + persisted state (active
+  tunnel, update-check preferences).
+- `wireguard.py` — connect/disconnect and config import (.conf, QR image).
+- `updater.py` — GitHub releases API check (see "Update checking" below).
+- `theme.py` — the dark QSS stylesheet and the code-drawn tunnel icon.
+- `ui/main_window.py`, `ui/dialogs.py` — the sidebar window, Settings, and
+  changelog dialogs.
+- `tray.py` — the tray icon/menu, wiring the above together.
+- `app.py` — startup: OS app-identity setup, QApplication, launches `tray.py`.
 
 ### Option 2: Run from source
 
@@ -110,6 +131,6 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-Also bump `APP_VERSION` in [wg_tray.py](wg_tray.py) to match the tag —
+Also bump `APP_VERSION` in [wgtray/\_\_init\_\_.py](wgtray/__init__.py) to match the tag —
 it's what the app compares against GitHub's latest release to decide if
 an update is available, and what gates the one-time changelog popup.

@@ -53,6 +53,8 @@ if sys.platform == "darwin":
         icon=None,
         bundle_identifier="dev.wgtray.app",
         info_plist={
+            "CFBundleName": "wg-tray",
+            "CFBundleDisplayName": "wg-tray",
             "LSUIElement": True,  # menu-bar-only app, no Dock icon
             "NSHighResolutionCapable": True,
         },
