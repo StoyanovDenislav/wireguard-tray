@@ -6,9 +6,16 @@ script (see wgtray/resources/leak_protection_macos.sh). wg-quick already
 runs PostUp/PreDown as root — same trust boundary as `wg-quick up` itself,
 nothing new is granted here.
 
-Linux support (iptables/nftables + resolvectl) is a natural follow-up but
-out of scope for now. Windows kill switches need WFP, a much bigger lift,
-and aren't attempted here.
+DNS handling is a pf block rule (port 53 on the physical interfaces), not
+a pin to the tunnel's resolver — pinning is fragile if the tunnel drops
+mid-resolution (you'd get a timeout against an unreachable resolver
+instead of a clean, immediate block). The pf anchor already blocks
+everything else on the physical interfaces; the DNS rule is mostly
+belt-and-suspenders for the brief window while the tunnel is up.
+
+Linux support (iptables/nftables) is a natural follow-up but out of
+scope for now. Windows kill switches need WFP, a much bigger lift, and
+aren't attempted here.
 """
 import re
 import shutil
@@ -66,10 +73,6 @@ def generate_protected_config(name):
     original = CONFIGS_DIR / f"{name}.conf"
     text = original.read_text()
 
-    dns = _extract(r"^\s*DNS\s*=\s*(.+)$", text, default="1.1.1.1")
-    # DNS can be a comma-separated list; the hook script wants one primary.
-    dns = dns.split(",")[0].strip()
-
     endpoint = _extract(r"^\s*Endpoint\s*=\s*(.+)$", text, default="")
     port = endpoint.rsplit(":", 1)[-1].strip() if ":" in endpoint else DEFAULT_ENDPOINT_PORT
     if not port.isdigit():
@@ -94,8 +97,8 @@ def generate_protected_config(name):
     for line in lines:
         out.append(line)
         if not inserted and line.strip().lower() == "[interface]":
-            out.append(f'PostUp = {script} up {dns} {port}')
-            out.append(f'PreDown = {script} down {dns} {port}')
+            out.append(f'PostUp = {script} up {port}')
+            out.append(f'PreDown = {script} down {port}')
             inserted = True
 
     protected = protected_config_path(name)

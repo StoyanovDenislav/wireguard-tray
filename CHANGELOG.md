@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.1
+
+- **Changed**: leak-protection DNS handling now blocks port 53 on
+  physical interfaces via the pf anchor instead of pinning DNS to the
+  tunnel's resolver — pinning was fragile if the tunnel dropped
+  mid-resolution (timeout against an unreachable resolver instead of a
+  clean block).
+- **Fixed**: the kill switch's pf anchor now covers every physical
+  network interface (enumerated dynamically — Wi-Fi, built-in Ethernet,
+  Thunderbolt bridges, USB dongles), not just `en0`. Machines with a
+  secondary interface were previously only partially protected.
+- **Fixed**: IPv6 settings could be left disabled permanently if wg-tray
+  or the tunnel was force-quit while connected (PreDown never ran).
+  Connecting any protected tunnel now detects a leftover snapshot from
+  an unclean shutdown and restores IPv6 automatically first.
+- **Added**: a confirmation dialog when first enabling the kill switch
+  for a tunnel, explaining that it blocks all internet access (not just
+  the VPN) if the tunnel drops — the checkbox's tooltip made this clear
+  but was easy to miss.
+
 ## 0.4.0
 
 - **Added**: opt-in kill switch + leak protection for macOS. Per-tunnel

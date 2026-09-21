@@ -106,34 +106,52 @@ stores a password itself — it always hands off to your OS's native prompt:
 
 Per-tunnel checkbox: "Kill switch + leak protection (macOS)". Off by
 default — enabling it doesn't touch other tunnels, and existing configs
-keep working exactly as before if you leave it off.
+keep working exactly as before if you leave it off. Checking it shows a
+confirmation dialog first, since a kill switch means **losing internet
+entirely** if the tunnel drops, not just losing the VPN — that's the
+whole point, but it's worth confirming rather than a silent surprise.
 
 When enabled for a tunnel, connecting no longer runs wg-quick against your
 imported `.conf` directly. Instead wg-tray generates a derived copy (never
 modifying the original) with `PostUp`/`PreDown` hooks added, and those hooks
 run a bundled script (`wgtray/resources/leak_protection_macos.sh`) that:
 
-1. **Kill switch** — loads a `pf` anchor that blocks all traffic on your
-   physical interface except DHCP and the WireGuard endpoint's own port,
-   and passes everything on the tunnel's `utun*` interface. If the tunnel
-   drops unexpectedly, your physical interface stays blocked instead of
+1. **Kill switch** — loads a `pf` anchor covering every physical network
+   interface (Wi-Fi, built-in Ethernet, Thunderbolt bridges, USB dongles —
+   enumerated dynamically, not hardcoded to `en0`), blocking everything
+   except DHCP and the WireGuard endpoint's own port, and passing
+   everything on the tunnel's `utun*` interface. If the tunnel drops
+   unexpectedly, your physical interfaces stay blocked instead of
    silently leaking your real IP.
-2. **DNS pinning** — points your physical interface's DNS at the tunnel's
-   resolver (from the config's `DNS =` line) so DNS queries go through the
-   tunnel instead of leaking to your ISP.
-3. **IPv6 guard** — disables IPv6 on your physical interface while
+2. **DNS blocking** — the same pf anchor blocks outbound DNS (port 53) on
+   every physical interface. This blocks rather than pins to the tunnel's
+   resolver — pinning is fragile if the tunnel drops mid-resolution (a
+   timeout against an unreachable resolver instead of a clean block).
+3. **IPv6 guard** — disables IPv6 on every physical interface while
    connected, since most WireGuard configs only route `0.0.0.0/0` and
    IPv6 traffic would otherwise bypass the tunnel entirely.
 
 Disconnecting (or unchecking the box before reconnecting) restores your
-original DNS and IPv6 settings and unloads the pf anchor. The checkbox is
-disabled while that tunnel is connected, since flipping it mid-connection
-would tear it down via a different config than it came up with.
+original IPv6 settings and unloads the pf anchor. The checkbox is disabled
+while that tunnel is connected, since flipping it mid-connection would
+tear it down via a different config than it came up with.
+
+**If wg-tray or the tunnel is force-quit while connected** (so `PreDown`
+never runs), the next time you connect *any* protected tunnel, wg-tray
+detects the leftover state and restores IPv6 automatically before
+proceeding. If you don't reconnect anything and just want your original
+IPv6 setting back immediately, run:
+```
+sudo networksetup -setv6automatic "Wi-Fi"    # or your interface's service name
+```
+(`networksetup -listallnetworkservices` lists the exact names.) The pf
+anchor itself doesn't need manual cleanup — `pfctl -a wg-tray-leakguard -F all`
+flushes it, though a reboot or `pfctl -d`/`-e` cycle also clears it.
 
 This needs `pfctl`, which is standard on macOS — nothing extra to install.
-Not yet available on Linux (an iptables/nftables + resolvectl equivalent is
-a natural follow-up) or Windows (needs the Windows Filtering Platform, a
-bigger lift, and isn't implemented).
+Not yet available on Linux (an iptables/nftables equivalent is a natural
+follow-up) or Windows (needs the Windows Filtering Platform, a bigger
+lift, and isn't implemented).
 
 ## Update checking
 

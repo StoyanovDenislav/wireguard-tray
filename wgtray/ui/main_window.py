@@ -3,7 +3,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent, QFont
 from PySide6.QtWidgets import (
     QCheckBox, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QMainWindow, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QMainWindow, QMessageBox, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from .. import leak_protection
@@ -82,10 +82,13 @@ class MainWindow(QMainWindow):
 
         self.leak_protection_box = QCheckBox("Kill switch + leak protection (macOS)")
         self.leak_protection_box.setToolTip(
-            "Blocks all traffic on your physical network interface if the\n"
-            "tunnel drops, pins DNS to the tunnel's resolver, and disables\n"
-            "IPv6 on the physical interface while connected. Can't be\n"
-            "changed while this tunnel is connected."
+            "While this tunnel is connected, ALL other internet access on\n"
+            "this Mac is blocked if the tunnel drops — that's the point of\n"
+            "a kill switch, but it means losing internet, not just losing\n"
+            "the VPN, until you reconnect or disconnect from wg-tray.\n\n"
+            "Also blocks DNS queries and disables IPv6 on your physical\n"
+            "network interfaces while connected. Can't be changed while\n"
+            "this tunnel is connected."
         )
         self.leak_protection_box.toggled.connect(self.on_leak_protection_toggled)
         if not IS_MAC:
@@ -186,6 +189,26 @@ class MainWindow(QMainWindow):
         name = self.selected_name()
         if name is None:
             return
+
+        if checked:
+            proceed = QMessageBox.question(
+                self,
+                "Enable kill switch?",
+                "This blocks ALL other internet access on this Mac if the "
+                "tunnel drops, not just the VPN — you'll lose internet "
+                "entirely until you reconnect or disconnect this tunnel in "
+                "wg-tray.\n\nIt also blocks DNS queries and disables IPv6 "
+                "on your physical network interfaces while connected.\n\n"
+                "Enable it for this tunnel?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if proceed != QMessageBox.Yes:
+                self.leak_protection_box.blockSignals(True)
+                self.leak_protection_box.setChecked(False)
+                self.leak_protection_box.blockSignals(False)
+                return
+
         set_leak_protection(name, checked)
         if not checked:
             leak_protection.remove_protected_config(name)
