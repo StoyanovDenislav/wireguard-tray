@@ -2,6 +2,7 @@
 the user's update-check preferences."""
 import json
 
+from .leak_protection import is_protected_filename
 from .paths import APP_DIR, CONFIGS_DIR, STATE_FILE
 
 DEFAULT_STATE = {
@@ -36,7 +37,14 @@ def save_state(state):
 
 def list_configs():
     ensure_dirs()
-    return sorted(p.stem for p in CONFIGS_DIR.glob("*.conf"))
+    # Exclude leak_protection.py's generated derived copies (e.g.
+    # client1.protected.conf) — they live in the same directory as real
+    # configs, but aren't tunnels a user imported, and would otherwise
+    # show up as their own selectable "tunnels" in the sidebar.
+    return sorted(
+        p.stem for p in CONFIGS_DIR.glob("*.conf")
+        if not is_protected_filename(p.name)
+    )
 
 
 def config_path(name):

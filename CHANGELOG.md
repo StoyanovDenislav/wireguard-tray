@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.3
+
+- **Fixed**: leak protection's derived `<name>.protected.conf` files live
+  in the same directory as real tunnel configs, and were showing up as
+  their own selectable "tunnels" in the sidebar. Enabling the kill
+  switch on one of those created `<name>.protected.protected.conf`, and
+  so on — a runaway cascade with no way to disable it once triggered.
+  `list_configs()` now filters out derived configs, and
+  `generate_protected_config()` refuses to run on a name that's already
+  a derived config as a second line of defense.
+
 ## 0.4.2
 
 - **Fixed**: "Couldn't reach GitHub to check for updates" in packaged

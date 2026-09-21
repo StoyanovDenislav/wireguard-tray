@@ -26,6 +26,7 @@ from .platform_utils import IS_MAC
 
 SCRIPT_NAME = "leak_protection_macos.sh"
 DEFAULT_ENDPOINT_PORT = "51820"
+PROTECTED_SUFFIX = ".protected"
 
 
 def _bundled_script_path():
@@ -57,8 +58,16 @@ def _extract(pattern, text, default=None):
     return m.group(1).strip() if m else default
 
 
+def is_protected_filename(filename):
+    """True for a derived config's filename (e.g. 'client1.protected.conf'),
+    so callers can filter these out of the user-facing tunnel list — they're
+    generated artifacts living in the same directory as real configs, not
+    tunnels a user imported."""
+    return filename.endswith(f"{PROTECTED_SUFFIX}.conf")
+
+
 def protected_config_path(name):
-    return CONFIGS_DIR / f"{name}.protected.conf"
+    return CONFIGS_DIR / f"{name}{PROTECTED_SUFFIX}.conf"
 
 
 def generate_protected_config(name):
@@ -69,6 +78,13 @@ def generate_protected_config(name):
     """
     if not IS_MAC:
         raise RuntimeError("Leak protection is currently macOS-only.")
+
+    if is_protected_filename(f"{name}.conf"):
+        # Guards against ever generating client1.protected.protected.conf —
+        # this shouldn't be reachable now that list_configs() filters
+        # derived files out, but fail loudly rather than silently stacking
+        # suffixes if something upstream regresses.
+        raise ValueError(f"'{name}' looks like an already-derived leak-protection config.")
 
     original = CONFIGS_DIR / f"{name}.conf"
     text = original.read_text()
