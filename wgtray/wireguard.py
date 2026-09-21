@@ -2,11 +2,28 @@
 import os
 from pathlib import Path
 
+from . import leak_protection
 from .paths import CONFIGS_DIR
 from .platform_utils import (
     IS_MAC, IS_WINDOWS, find_bash, find_wg_quick, find_wireguard_exe, run_privileged,
 )
-from .state import config_path, load_state, save_state
+from .state import config_path, leak_protection_enabled, load_state, save_state
+
+
+def _effective_config_path(name):
+    """
+    The config wg-quick should actually use for this tunnel: the derived
+    leak-protection copy if the user has enabled it for this tunnel (macOS
+    only), otherwise the original as-imported .conf. Regenerated fresh on
+    every connect so edits to the original or a changed DNS/endpoint are
+    always picked up. Must be used consistently for both up and down —
+    wg-quick derives the interface name from the config filename, so
+    bringing it up via one path and down via another leaves it stuck.
+    """
+    if IS_MAC and leak_protection_enabled(name):
+        return leak_protection.generate_protected_config(name)
+    return config_path(name)
+
 
 try:
     from pyzbar.pyzbar import decode as qr_decode
@@ -27,7 +44,7 @@ def connect(name):
         wg_quick = find_wg_quick()
         if not wg_quick:
             return False, "wg-quick not found. Install wireguard-tools first."
-        conf = str(config_path(name))
+        conf = str(_effective_config_path(name))
         if IS_MAC:
             bash = find_bash()
             argv = [bash, wg_quick, "up", conf]
@@ -54,7 +71,13 @@ def disconnect(name):
         wg_quick = find_wg_quick()
         if not wg_quick:
             return False, "wg-quick not found."
-        conf = str(config_path(name))
+        # Use the *existing* derived config rather than regenerating it,
+        # in case leak protection was toggled off while connected — we
+        # still need to tear down via the same interface it came up on.
+        if IS_MAC and leak_protection.protected_config_path(name).exists():
+            conf = str(leak_protection.protected_config_path(name))
+        else:
+            conf = str(config_path(name))
         if IS_MAC:
             bash = find_bash()
             argv = [bash, wg_quick, "down", conf]

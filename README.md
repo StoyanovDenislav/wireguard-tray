@@ -48,6 +48,8 @@ than the latest tagged release.
 - `paths.py` / `state.py` — on-disk config dir + persisted state (active
   tunnel, update-check preferences).
 - `wireguard.py` — connect/disconnect and config import (.conf, QR image).
+- `leak_protection.py` + `resources/leak_protection_macos.sh` — the
+  opt-in macOS kill switch/DNS/IPv6 guard (see below).
 - `updater.py` — GitHub releases API check (see "Update checking" below).
 - `theme.py` — the dark QSS stylesheet and the code-drawn tunnel icon.
 - `ui/main_window.py`, `ui/dialogs.py` — the sidebar window, Settings, and
@@ -99,6 +101,39 @@ stores a password itself — it always hands off to your OS's native prompt:
 - Linux: `pkexec` (polkit's graphical sudo prompt)
 - macOS: `osascript` administrator-privileges dialog
 - Windows: native UAC prompt
+
+## Kill switch + leak protection (macOS only, opt-in)
+
+Per-tunnel checkbox: "Kill switch + leak protection (macOS)". Off by
+default — enabling it doesn't touch other tunnels, and existing configs
+keep working exactly as before if you leave it off.
+
+When enabled for a tunnel, connecting no longer runs wg-quick against your
+imported `.conf` directly. Instead wg-tray generates a derived copy (never
+modifying the original) with `PostUp`/`PreDown` hooks added, and those hooks
+run a bundled script (`wgtray/resources/leak_protection_macos.sh`) that:
+
+1. **Kill switch** — loads a `pf` anchor that blocks all traffic on your
+   physical interface except DHCP and the WireGuard endpoint's own port,
+   and passes everything on the tunnel's `utun*` interface. If the tunnel
+   drops unexpectedly, your physical interface stays blocked instead of
+   silently leaking your real IP.
+2. **DNS pinning** — points your physical interface's DNS at the tunnel's
+   resolver (from the config's `DNS =` line) so DNS queries go through the
+   tunnel instead of leaking to your ISP.
+3. **IPv6 guard** — disables IPv6 on your physical interface while
+   connected, since most WireGuard configs only route `0.0.0.0/0` and
+   IPv6 traffic would otherwise bypass the tunnel entirely.
+
+Disconnecting (or unchecking the box before reconnecting) restores your
+original DNS and IPv6 settings and unloads the pf anchor. The checkbox is
+disabled while that tunnel is connected, since flipping it mid-connection
+would tear it down via a different config than it came up with.
+
+This needs `pfctl`, which is standard on macOS — nothing extra to install.
+Not yet available on Linux (an iptables/nftables + resolvectl equivalent is
+a natural follow-up) or Windows (needs the Windows Filtering Platform, a
+bigger lift, and isn't implemented).
 
 ## Update checking
 

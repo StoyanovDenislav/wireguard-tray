@@ -8,6 +8,7 @@ DEFAULT_STATE = {
     "active": None,
     "seen_version": None,
     "auto_update_check": False,
+    "leak_protection": {},  # {tunnel_name: bool}, macOS only for now
 }
 
 
@@ -40,3 +41,13 @@ def list_configs():
 
 def config_path(name):
     return CONFIGS_DIR / f"{name}.conf"
+
+
+def leak_protection_enabled(name):
+    return bool(load_state().get("leak_protection", {}).get(name, False))
+
+
+def set_leak_protection(name, enabled):
+    state = load_state()
+    state.setdefault("leak_protection", {})[name] = bool(enabled)
+    save_state(state)

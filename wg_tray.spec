@@ -8,7 +8,7 @@ a = Analysis(
     ["wg_tray.py"],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[("wgtray/resources", "wgtray/resources")],
     hiddenimports=["pyzbar.pyzbar"],
     hookspath=[],
     hooksconfig={},

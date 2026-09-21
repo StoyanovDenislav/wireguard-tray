@@ -2,11 +2,13 @@
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent, QFont
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow,
-    QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QCheckBox, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QMainWindow, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
-from ..state import list_configs
+from .. import leak_protection
+from ..platform_utils import IS_MAC
+from ..state import leak_protection_enabled, list_configs, set_leak_protection
 
 
 class MainWindow(QMainWindow):
@@ -78,6 +80,24 @@ class MainWindow(QMainWindow):
 
         detail_layout.addSpacing(16)
 
+        self.leak_protection_box = QCheckBox("Kill switch + leak protection (macOS)")
+        self.leak_protection_box.setToolTip(
+            "Blocks all traffic on your physical network interface if the\n"
+            "tunnel drops, pins DNS to the tunnel's resolver, and disables\n"
+            "IPv6 on the physical interface while connected. Can't be\n"
+            "changed while this tunnel is connected."
+        )
+        self.leak_protection_box.toggled.connect(self.on_leak_protection_toggled)
+        if not IS_MAC:
+            self.leak_protection_box.setVisible(False)
+        leak_row = QHBoxLayout()
+        leak_row.addStretch(1)
+        leak_row.addWidget(self.leak_protection_box)
+        leak_row.addStretch(1)
+        detail_layout.addLayout(leak_row)
+
+        detail_layout.addSpacing(8)
+
         self.toggle_btn = QPushButton("Connect")
         self.toggle_btn.setObjectName("toggle-connect")
         self.toggle_btn.setFixedHeight(48)
@@ -138,11 +158,18 @@ class MainWindow(QMainWindow):
             self.toggle_btn.setEnabled(False)
             self.toggle_btn.setText("Connect")
             self.toggle_btn.setObjectName("toggle-connect")
+            self.leak_protection_box.setEnabled(False)
             self._repolish(self.status_label, self.toggle_btn)
             return
 
         self.toggle_btn.setEnabled(True)
         self.name_label.setText(name)
+
+        self.leak_protection_box.blockSignals(True)
+        self.leak_protection_box.setChecked(leak_protection_enabled(name))
+        self.leak_protection_box.setEnabled(name != active)
+        self.leak_protection_box.blockSignals(False)
+
         if name == active:
             self.status_label.setText("● Connected")
             self.status_label.setObjectName("status-connected")
@@ -154,6 +181,14 @@ class MainWindow(QMainWindow):
             self.toggle_btn.setText("Connect")
             self.toggle_btn.setObjectName("toggle-connect")
         self._repolish(self.status_label, self.toggle_btn)
+
+    def on_leak_protection_toggled(self, checked):
+        name = self.selected_name()
+        if name is None:
+            return
+        set_leak_protection(name, checked)
+        if not checked:
+            leak_protection.remove_protected_config(name)
 
     def _repolish(self, *widgets):
         # Force QSS re-evaluation after changing objectName at runtime.
