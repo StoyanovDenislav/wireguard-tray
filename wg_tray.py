@@ -27,10 +27,12 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QMessageBox, QFileDialog,
-    QInputDialog, QLineEdit
+    QInputDialog, QLineEdit, QMainWindow, QWidget, QListWidget,
+    QListWidgetItem, QHBoxLayout, QVBoxLayout, QPushButton, QLabel,
+    QFrame, QSizePolicy
 )
-from PySide6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor, QFont
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor, QFont, QCloseEvent
+from PySide6.QtCore import Qt, QTimer, QSize
 
 try:
     from pyzbar.pyzbar import decode as qr_decode
@@ -300,6 +302,147 @@ def make_icon(connected):
 
 
 # ---------------------------------------------------------------------
+# Main window (sidebar of tunnels + detail pane), Mullvad/OpenVPN-style
+# ---------------------------------------------------------------------
+
+class MainWindow(QMainWindow):
+    def __init__(self, controller):
+        super().__init__()
+        self.controller = controller
+        self.setWindowTitle("wg-tray")
+        self.resize(680, 420)
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # --- Sidebar ---
+        sidebar = QWidget()
+        sidebar.setFixedWidth(220)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(0)
+
+        self.list = QListWidget()
+        self.list.setFrameShape(QFrame.NoFrame)
+        self.list.currentItemChanged.connect(self.on_selection_changed)
+        sidebar_layout.addWidget(self.list)
+
+        sidebar_buttons = QHBoxLayout()
+        sidebar_buttons.setContentsMargins(8, 8, 8, 8)
+        import_file_btn = QPushButton("+ .conf")
+        import_file_btn.clicked.connect(self.controller.do_import_file)
+        import_qr_btn = QPushButton("+ QR")
+        import_qr_btn.clicked.connect(self.controller.do_import_qr)
+        sidebar_buttons.addWidget(import_file_btn)
+        sidebar_buttons.addWidget(import_qr_btn)
+        sidebar_layout.addLayout(sidebar_buttons)
+
+        root.addWidget(sidebar)
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.VLine)
+        root.addWidget(divider)
+
+        # --- Detail pane ---
+        detail = QWidget()
+        detail_layout = QVBoxLayout(detail)
+        detail_layout.setContentsMargins(32, 32, 32, 32)
+        detail_layout.setSpacing(12)
+        detail_layout.addStretch(1)
+
+        self.name_label = QLabel("No tunnel selected")
+        name_font = QFont()
+        name_font.setPointSize(20)
+        name_font.setBold(True)
+        self.name_label.setFont(name_font)
+        self.name_label.setAlignment(Qt.AlignCenter)
+        detail_layout.addWidget(self.name_label)
+
+        self.status_label = QLabel("")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        detail_layout.addWidget(self.status_label)
+
+        detail_layout.addSpacing(16)
+
+        self.toggle_btn = QPushButton("Connect")
+        self.toggle_btn.setFixedHeight(48)
+        self.toggle_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.toggle_btn.setMinimumWidth(180)
+        self.toggle_btn.clicked.connect(self.on_toggle_clicked)
+        toggle_row = QHBoxLayout()
+        toggle_row.addStretch(1)
+        toggle_row.addWidget(self.toggle_btn)
+        toggle_row.addStretch(1)
+        detail_layout.addLayout(toggle_row)
+
+        detail_layout.addStretch(2)
+
+        root.addWidget(detail, 1)
+
+        self.refresh()
+
+    def closeEvent(self, event: QCloseEvent):
+        # Minimize to tray instead of quitting — the tray icon stays live.
+        event.ignore()
+        self.hide()
+
+    def selected_name(self):
+        item = self.list.currentItem()
+        return item.data(Qt.UserRole) if item else None
+
+    def refresh(self):
+        active = self.controller.current_active()
+        previously_selected = self.selected_name()
+
+        self.list.blockSignals(True)
+        self.list.clear()
+        for name in list_configs():
+            item = QListWidgetItem(f"●  {name}" if name == active else f"   {name}")
+            item.setData(Qt.UserRole, name)
+            self.list.addItem(item)
+            if name == previously_selected or (previously_selected is None and name == active):
+                self.list.setCurrentItem(item)
+        self.list.blockSignals(False)
+
+        if self.list.currentItem() is None and self.list.count():
+            self.list.setCurrentRow(0)
+
+        self.update_detail()
+
+    def on_selection_changed(self, *_):
+        self.update_detail()
+
+    def update_detail(self):
+        name = self.selected_name()
+        active = self.controller.current_active()
+
+        if name is None:
+            self.name_label.setText("No tunnels imported yet")
+            self.status_label.setText("Use + .conf or + QR to add one")
+            self.toggle_btn.setEnabled(False)
+            self.toggle_btn.setText("Connect")
+            return
+
+        self.toggle_btn.setEnabled(True)
+        self.name_label.setText(name)
+        if name == active:
+            self.status_label.setText("● Connected")
+            self.toggle_btn.setText("Disconnect")
+        else:
+            self.status_label.setText("○ Disconnected")
+            self.toggle_btn.setText("Connect")
+
+    def on_toggle_clicked(self):
+        name = self.selected_name()
+        if name is None:
+            return
+        self.controller.toggle(name)
+
+
+# ---------------------------------------------------------------------
 # Tray application
 # ---------------------------------------------------------------------
 
@@ -310,14 +453,27 @@ class WgTray:
         self.tray = QSystemTrayIcon()
         self.menu = QMenu()
         self.tray.setContextMenu(self.menu)
+        self.window = MainWindow(self)
         self.rebuild_menu()
         self.tray.show()
+
+        self.tray.activated.connect(self.on_tray_activated)
 
         # Poll connection state periodically in case it changes outside
         # this app (e.g. you ran wg-quick manually in a terminal).
         self.timer = QTimer()
-        self.timer.timeout.connect(self.rebuild_menu)
+        self.timer.timeout.connect(self.refresh_all)
         self.timer.start(5000)
+
+    def on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.Trigger:
+            self.show_window()
+
+    def show_window(self):
+        self.window.refresh()
+        self.window.show()
+        self.window.raise_()
+        self.window.activateWindow()
 
     def current_active(self):
         return load_state().get("active")
@@ -357,9 +513,19 @@ class WgTray:
         self.menu.addAction(import_qr_action)
 
         self.menu.addSeparator()
+        open_window_action = QAction("Open window…", self.menu)
+        open_window_action.triggered.connect(self.show_window)
+        self.menu.addAction(open_window_action)
+
+        self.menu.addSeparator()
         quit_action = QAction("Quit", self.menu)
         quit_action.triggered.connect(self.app.quit)
         self.menu.addAction(quit_action)
+
+    def refresh_all(self):
+        self.rebuild_menu()
+        if self.window.isVisible():
+            self.window.refresh()
 
     def toggle(self, name):
         active = self.current_active()
@@ -376,7 +542,7 @@ class WgTray:
             ok, out = connect(name)
             if not ok:
                 self.error(f"Failed to connect:\n{out}")
-        self.rebuild_menu()
+        self.refresh_all()
 
     def do_import_file(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -392,7 +558,7 @@ class WgTray:
             return
         try:
             import_conf_file(path, name.strip())
-            self.rebuild_menu()
+            self.refresh_all()
         except Exception as e:
             self.error(str(e))
 
@@ -420,7 +586,7 @@ class WgTray:
             return
         try:
             import_from_qr_image(path, name.strip())
-            self.rebuild_menu()
+            self.refresh_all()
         except Exception as e:
             self.error(str(e))
 

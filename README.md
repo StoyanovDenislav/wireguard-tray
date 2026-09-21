@@ -1,4 +1,5 @@
 # wg-tray
+(Yes, this is vibecoded as heck, I just wanted a simple tool, no time to write code, sorry.)
 
 A tiny, open-source, no-telemetry WireGuard tray client. Lives in your system
 tray like Mullvad/OpenVPN's app, but is just a thin GUI wrapper around the
