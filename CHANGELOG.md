@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.11.0
+
+- **Added**: optional passwordless helper on macOS (Settings). One admin
+  prompt installs root-owned copies of the WireGuard tools plus a
+  validating wrapper and a sudoers rule for it only; connect/disconnect
+  then need no password. The wrapper strips user-config hook lines and
+  adds its own root-owned kill-switch hooks.
+- **Added**: the main window shows the tunnel's Address, Endpoint and DNS,
+  plus the default gateway while connected.
+- **Fixed**: disconnect failed with "is not a WireGuard interface" when
+  the tunnel had already dropped, leaving the kill switch stuck on.
+  The kill switch is now lifted and the tunnel marked disconnected.
+
 ## 0.10.1
 
 - **Fixed**: quitting the app (Cmd+Q, Alt+F4, the tray menu's Quit,
