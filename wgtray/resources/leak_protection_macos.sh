@@ -36,10 +36,12 @@ set -euo pipefail
 ACTION="${1:?up or down required}"
 ENDPOINT_PORT="${2:-51820}"
 
-STATE_DIR="$HOME/.config/wg-tray"
+# Root helper sets WGTRAY_STATE_DIR to a root-only dir (a user-writable
+# STATE_DIR/PF_CONF would let a local user redirect root writes).
+STATE_DIR="${WGTRAY_STATE_DIR:-$HOME/.config/wg-tray}"
 SNAPSHOT_FILE="$STATE_DIR/.leak_protection_snapshot"
 ANCHOR_NAME="wg-tray-leakguard"
-PF_CONF="/tmp/wg-tray-leakguard.pf.conf"
+PF_CONF="$STATE_DIR/leakguard.pf.conf"
 
 mkdir -p "$STATE_DIR"
 

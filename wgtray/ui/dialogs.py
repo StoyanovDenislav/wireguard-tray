@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import APP_VERSION
-from ..platform_utils import disconnect_other_vpn
+from ..platform_utils import IS_MAC, disconnect_other_vpn, helper_installed, install_helper
 from ..self_update import UpdateError, install_and_relaunch, is_frozen
 from ..state import load_state, save_state
 from ..updater import asset_for_platform, fetch_latest_release, is_newer_version
@@ -65,12 +65,21 @@ class SettingsDialog(QDialog):
 
         self._install_btn = None  # created on demand once an update is found
 
+        if IS_MAC:
+            self.helper_btn = QPushButton("Reinstall passwordless helper" if helper_installed() else "Install passwordless helper (one admin prompt)")
+            self.helper_btn.clicked.connect(self.on_helper_clicked)
+            layout.addWidget(self.helper_btn)
+
         layout.addStretch(1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
         buttons.rejected.connect(self.close)
         buttons.accepted.connect(self.close)
         layout.addWidget(buttons)
+
+    def on_helper_clicked(self):
+        ok, out = install_helper()
+        self.result_label.setText("Helper installed." if ok else f"Helper install failed:\n{out}")
 
     def on_auto_toggle(self, checked):
         state = load_state()

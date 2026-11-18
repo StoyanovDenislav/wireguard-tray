@@ -7,7 +7,8 @@ from . import key_encryption, leak_protection
 from .paths import CONFIGS_DIR, RUNTIME_DIR
 from .platform_utils import (
     IS_MAC, IS_WINDOWS, disconnect_other_vpn, find_bash, find_conflicting_vpn_interface,
-    find_running_vpn_daemons, find_wg_quick, find_wireguard_exe, run_privileged,
+    HELPER, find_running_vpn_daemons, find_wg_quick, find_wireguard_exe, helper_installed,
+    run_privileged,
 )
 from .state import config_path, leak_protection_enabled, load_state, save_state
 
@@ -111,6 +112,15 @@ except ImportError:
     HAVE_QR = False
 
 
+def _mac_argv(op, conf):
+    """Passwordless helper argv if installed (it strips hooks and re-adds
+    the root-owned leak hooks itself, so it needs only the port), else None."""
+    if not helper_installed():
+        return None
+    m = re.search(r"^PostUp\s*=.*\bup (\d+)\s*$", Path(conf).read_text(), re.MULTILINE)
+    return [HELPER, op, conf] + ([m.group(1)] if m else [])
+
+
 def connect(name, decrypted_private_key=None):
     """
     decrypted_private_key: only needed if the tunnel's PrivateKey is
@@ -150,7 +160,7 @@ def connect(name, decrypted_private_key=None):
         conf = str(conf_path)
         if IS_MAC:
             bash = find_bash()
-            argv = [bash, wg_quick, "up", conf]
+            argv = _mac_argv("up", conf) or [bash, wg_quick, "up", conf]
         else:
             argv = [wg_quick, "up", conf]
 
@@ -197,11 +207,19 @@ def disconnect(name):
             conf = str(config_path(name))
         if IS_MAC:
             bash = find_bash()
-            argv = [bash, wg_quick, "down", conf]
+            argv = _mac_argv("down", conf) or [bash, wg_quick, "down", conf]
         else:
             argv = [wg_quick, "down", conf]
 
     ok, out = run_privileged(argv)
+    if not ok and not IS_WINDOWS and "is not a WireGuard interface" in out:
+        # Tunnel already gone (dropped/killed) so wg-quick down bails before
+        # PreDown runs, leaving the kill switch (pf/nft, IPv6 off) stuck on.
+        # Run the PreDown hook ourselves, then treat as disconnected.
+        m = re.search(r"^PreDown\s*=\s*(.+)$", Path(conf).read_text(), re.MULTILINE)
+        if m:
+            run_privileged(["/bin/sh", "-c", m.group(1).strip()])
+        ok = True
     if ok:
         state = load_state()
         if state.get("active") == name:

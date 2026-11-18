@@ -1,4 +1,8 @@
 """Sidebar (tunnel list) + detail pane main window, Mullvad/OpenVPN-style."""
+import re
+import subprocess
+import sys
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCloseEvent, QFont
 from PySide6.QtWidgets import (
@@ -9,6 +13,27 @@ from PySide6.QtWidgets import (
 from .. import config_editor, leak_protection
 from ..state import config_path, leak_protection_enabled, list_configs, set_leak_protection
 from .config_editor_dialog import ConfigEditorDialog
+
+
+def _default_gateway():
+    try:
+        out = subprocess.run(["route", "-n", "get", "default"] if sys.platform == "darwin"
+                             else ["ip", "route", "show", "default"],
+                             capture_output=True, text=True, timeout=2).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"gateway:\s*(\S+)|default via (\S+)", out)
+    return (m.group(1) or m.group(2)) if m else None
+
+
+def _tunnel_info(name, connected):
+    sections, _ = config_editor.parse_sections(config_path(name).read_text())
+    vals = {k.lower(): v for sec, kvs in sections for k, v, _ in kvs}
+    rows = [(label, vals[key]) for label, key in
+            (("Address", "address"), ("Endpoint", "endpoint"), ("DNS", "dns")) if key in vals]
+    if connected and (gw := _default_gateway()):
+        rows.append(("Gateway", gw))
+    return "\n".join(f"{k}: {v}" for k, v in rows)
 
 
 class MainWindow(QMainWindow):
@@ -96,6 +121,11 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("")
         self.status_label.setAlignment(Qt.AlignCenter)
         detail_layout.addWidget(self.status_label)
+
+        self.info_label = QLabel("")
+        self.info_label.setAlignment(Qt.AlignCenter)
+        self.info_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        detail_layout.addWidget(self.info_label)
 
         detail_layout.addSpacing(16)
 
@@ -186,6 +216,7 @@ class MainWindow(QMainWindow):
         if name is None:
             self.name_label.setText("No tunnels imported yet")
             self.status_label.setText("Use + .conf or + QR to add one")
+            self.info_label.setText("")
             self.status_label.setObjectName("status-disconnected")
             self.toggle_btn.setEnabled(False)
             self.toggle_btn.setText("Connect")
@@ -226,6 +257,10 @@ class MainWindow(QMainWindow):
             self.toggle_btn.setText("Connect")
             self.toggle_btn.setObjectName("toggle-connect")
         self._repolish(self.status_label, self.toggle_btn)
+        try:
+            self.info_label.setText(_tunnel_info(name, name == active))
+        except OSError:
+            self.info_label.setText("")
 
     def on_leak_protection_toggled(self, checked):
         name = self.selected_name()

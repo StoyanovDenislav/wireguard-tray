@@ -9,3 +9,4 @@ AppDir/
 appimagetool
 *.egg-info/
 .DS_Store
+venv/

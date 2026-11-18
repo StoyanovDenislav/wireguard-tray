@@ -163,6 +163,27 @@ def find_conflicting_vpn_interface():
     return None
 
 
+HELPER_DIR = "/Library/PrivilegedHelperTools/wg-tray"
+HELPER = HELPER_DIR + "/wgtray-priv"
+
+
+def helper_installed():
+    """macOS passwordless helper present (see install_helper)."""
+    return IS_MAC and os.path.exists(HELPER) and os.path.exists("/etc/sudoers.d/wg-tray")
+
+
+def install_helper():
+    """One-time admin prompt: copy wg tools to a root-owned dir and add a
+    sudoers rule for the validating wrapper only. Returns (ok, output)."""
+    import getpass
+    tools = [find_bash(), find_wg_quick(), shutil.which("wg"), shutil.which("wireguard-go")]
+    if not all(tools):
+        return False, "Need bash 4+, wg-quick, wg and wireguard-go installed (brew install wireguard-tools bash)."
+    res = os.path.join(os.path.dirname(__file__), "resources")
+    return run_privileged(["/bin/bash", os.path.join(res, "install_helper_macos.sh"),
+                           getpass.getuser(), *tools, res])
+
+
 def run_privileged(argv):
     """
     Run argv (a list) with elevated privileges, returning (ok, output).
@@ -179,6 +200,10 @@ def run_privileged(argv):
         result = subprocess.run(cmd, capture_output=True, text=True)
         ok = result.returncode == 0
         return ok, (result.stdout + result.stderr).strip()
+
+    if IS_MAC and argv[0] == HELPER and helper_installed():
+        result = subprocess.run(["sudo", "-n"] + argv, capture_output=True, text=True)
+        return result.returncode == 0, (result.stdout + result.stderr).strip()
 
     if IS_MAC:
         # osascript needs one shell-escaped string, not argv
