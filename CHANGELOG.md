@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.0
+
+- **Added**: Delete button in the main window to remove a tunnel (config,
+  leak-protection copy and setting). Disabled while the tunnel is connected.
+
 ## 0.11.0
 
 - **Added**: optional passwordless helper on macOS (Settings). One admin

@@ -169,6 +169,9 @@ class MainWindow(QMainWindow):
         edit_row = QHBoxLayout()
         edit_row.addStretch(1)
         edit_row.addWidget(self.edit_config_btn)
+        self.delete_btn = QPushButton("Delete…")
+        self.delete_btn.clicked.connect(self.on_delete_clicked)
+        edit_row.addWidget(self.delete_btn)
         edit_row.addStretch(1)
         detail_layout.addLayout(edit_row)
 
@@ -223,6 +226,7 @@ class MainWindow(QMainWindow):
             self.toggle_btn.setObjectName("toggle-connect")
             self.leak_protection_box.setEnabled(False)
             self.edit_config_btn.setEnabled(False)
+            self.delete_btn.setEnabled(False)
             self._repolish(self.status_label, self.toggle_btn)
             return
 
@@ -242,6 +246,10 @@ class MainWindow(QMainWindow):
         self.leak_protection_box.blockSignals(False)
 
         self.edit_config_btn.setEnabled(name != active)
+        self.delete_btn.setEnabled(name != active)
+        self.delete_btn.setToolTip(
+            "Disconnect this tunnel first to delete it." if name == active else ""
+        )
         self.edit_config_btn.setToolTip(
             "Disconnect this tunnel first to edit its config." if name == active else ""
         )
@@ -342,3 +350,17 @@ class MainWindow(QMainWindow):
             return
         dlg = ConfigEditorDialog(name, self)
         dlg.exec()
+
+    def on_delete_clicked(self):
+        name = self.selected_name()
+        if name is None:
+            return
+        if QMessageBox.question(
+            self, "Delete tunnel", f"Delete '{name}'? This can't be undone."
+        ) != QMessageBox.Yes:
+            return
+        config_path(name).unlink(missing_ok=True)
+        leak_protection.remove_protected_config(name)
+        set_leak_protection(name, False)
+        self.controller.refresh_all()
+        self.refresh()
